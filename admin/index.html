@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Booksy Admin</title>
+    <link rel="stylesheet" href="/admin/style.css">
+</head>
+<body>
+<div class="app">
+    <header class="topbar">
+        <div class="brand">
+            <div class="brand-title">Booksy Admin</div>
+            <div class="brand-status">
+                <span id="statusDot" class="status-dot"></span>
+                <span id="statusText">Підключення...</span>
+            </div>
+        </div>
+
+        <div class="date-navigation">
+            <button id="prevDay" class="nav-button" type="button">‹</button>
+            <div id="currentDate" class="current-date">Завантаження...</div>
+            <button id="nextDay" class="nav-button" type="button">›</button>
+        </div>
+
+        <button id="refreshButton" class="refresh-button" type="button">↻ Оновити</button>
+    </header>
+
+    <main>
+        <div id="loading" class="loading">Завантаження календаря...</div>
+        <div id="error" class="error hidden"></div>
+
+        <div id="calendar" class="calendar hidden">
+            <div class="calendar-header">
+                <div class="time-column-header">Час</div>
+                <div id="staffHeaders" class="staff-headers"></div>
+            </div>
+
+            <div class="calendar-body">
+                <div id="timeColumn" class="time-column"></div>
+                <div id="staffColumns" class="staff-columns"></div>
+            </div>
+        </div>
+    </main>
+</div>
+
+<script src="/admin/app.js"></script>
+</body>
+</html>

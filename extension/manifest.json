@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "Booksy Calendar Test",
+  "version": "1.0.1",
+  "description": "Booksy calendar integration",
+  "permissions": [
+    "scripting",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://booksy.com/*",
+    "https://*.booksy.com/*",
+    "https://pl.booksy.com/*",
+    "http://localhost:3000/*",
+    "http://127.0.0.1:3000/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://booksy.com/*",
+        "https://*.booksy.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "inject.js"
+      ],
+      "matches": [
+        "https://booksy.com/*",
+        "https://*.booksy.com/*"
+      ]
+    }
+  ]
+}
