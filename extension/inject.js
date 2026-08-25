@@ -1068,6 +1068,7 @@ if (window.__BOOKSY_INJECT_LOADED__) {
                 );
             }
 
+            return;
             // --------------------------------------------------------
             // REAL CREATE
             // --------------------------------------------------------
@@ -1240,8 +1241,8 @@ if (window.__BOOKSY_INJECT_LOADED__) {
             date: "2026-08-26",
             start: "14:00",
             end: "14:30",
-            staffer_id: "856806",
-            variant_id: "22810234",
+            staffer_id: "859195",
+            variant_id: "22865720",
             business_secret_note: ""
         };
 
@@ -1396,7 +1397,7 @@ if (window.__BOOKSY_INJECT_LOADED__) {
             );
 
             const result = await booksyRequest(
-                `${base}/appointments/dry_run/`,
+                `${base}/appointments`,
                 {
                     method: "POST",
                     body: JSON.stringify(appointment)
