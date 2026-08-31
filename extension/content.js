@@ -44,6 +44,8 @@ if (!globalThis.__BOOKSY_CONTENT_LOADED__) {
 
     let injectReady = false;
     const pendingCommands = [];
+    let latestCalendarDate = null;
+    let calendarReceiveSequence = 0;
 
     /* ========================================================
      * SEND COMMAND TO INJECT.JS
@@ -260,9 +262,32 @@ if (!globalThis.__BOOKSY_CONTENT_LOADED__) {
             const url = event.data.url || "";
             const date = event.data.date || "";
 
+            const receiveSequence = ++calendarReceiveSequence;
+
             console.log("[BOOKSY] Calendar received from page");
             console.log("[BOOKSY] Calendar URL:", url);
             console.log("[BOOKSY] Calendar date:", date);
+            console.log(
+                "[BOOKSY] Calendar receive sequence:",
+                receiveSequence
+            );
+
+            if (!date) {
+                console.warn(
+                    "[BOOKSY] Calendar response without date — ignoring"
+                );
+                return;
+            }
+
+            /*
+             * IMPORTANT:
+             * Keep track of the newest calendar date received.
+             *
+             * This protects background.js from receiving
+             * an older calendar response after the user has
+             * already switched to another date.
+             */
+            latestCalendarDate = date;
 
             if (calendar && calendar.bookings) {
                 console.log(
@@ -278,7 +303,8 @@ if (!globalThis.__BOOKSY_CONTENT_LOADED__) {
                 type: "BOOKSY_CALENDAR",
                 calendar: calendar,
                 url: url,
-                date: date
+                date: date,
+                sequence: receiveSequence
             });
 
             return;

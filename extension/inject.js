@@ -25,6 +25,17 @@ if (window.__BOOKSY_INJECT_LOADED__) {
     let lastCalendarSignature = null;
     let syncTimer = null;
 
+    // Окремий стан для кожної дати.
+    // Не можна використовувати один signature для всіх дат,
+    // бо при 1 -> 2 -> 1 -> 2 старі дані повинні залишатися доступними.
+    const calendarCache = new Map();
+
+    // Остання дата, яку ми явно попросили Booksy відкрити.
+    let requestedCalendarDate = null;
+
+    // Захист від одночасних команд переключення дат.
+    let dateSwitchInProgress = false;
+
     // ============================================================
     // BOOKSY AUTH / CONTEXT
     // ============================================================
@@ -211,42 +222,102 @@ if (window.__BOOKSY_INJECT_LOADED__) {
 
     function createSignature(data, url) {
         try {
-            return (
-                getDateFromUrl(url) +
-                "|" +
-                JSON.stringify(data)
-            );
+            return JSON.stringify(data);
         } catch (error) {
-            return (
-                getDateFromUrl(url) +
-                "|" +
-                String(Date.now())
-            );
+            return String(Date.now());
         }
     }
 
     // ============================================================
-    // SEND CALENDAR
+    // SEND CALENDAR & CACHE
     // ============================================================
 
     function sendCalendar(data, url) {
-        if (!data) {
+        if (!data || !url) {
             return;
         }
 
         const date = getDateFromUrl(url);
+
+        if (!date) {
+            console.warn(
+                "[BOOKSY] Calendar response without date:",
+                url
+            );
+            return;
+        }
+
         const signature = createSignature(data, url);
 
         console.log("[BOOKSY] Calendar received from Booksy");
         console.log("[BOOKSY] URL:", url);
         console.log("[BOOKSY] Date:", date);
 
-        if (signature === lastCalendarSignature) {
-            console.log("[BOOKSY] Calendar unchanged");
+        /*
+         * Кешуємо календар ОКРЕМО для кожної дати.
+         *
+         * Наприклад:
+         * 2026-09-01 -> data1
+         * 2026-09-02 -> data2
+         *
+         * Тому після:
+         * 1 -> 2 -> 1 -> 2
+         *
+         * ми не втрачаємо попередні дані.
+         */
+        const cached = calendarCache.get(date);
+
+        if (cached && cached.signature === signature) {
+            console.log(
+                "[BOOKSY] Calendar unchanged for date:",
+                date
+            );
+
+            /*
+             * Якщо саме ця дата зараз потрібна UI,
+             * все одно можна повторно передати cached data.
+             *
+             * Це важливо при поверненні:
+             * 1 -> 2 -> 1
+             */
+            if (requestedCalendarDate === date) {
+                window.postMessage(
+                    {
+                        source: "BOOKSY_EXTENSION",
+                        type: "BOOKSY_CALENDAR",
+                        calendar: cached.data,
+                        url: cached.url || url,
+                        date: date,
+                        cached: true
+                    },
+                    "*"
+                );
+            }
+
             return;
         }
 
+        calendarCache.set(date, {
+            signature: signature,
+            data: data,
+            url: url,
+            receivedAt: Date.now()
+        });
+
+        /*
+         * Захист від нескінченного росту cache.
+         * Тримаємо максимум 20 дат.
+         */
+        if (calendarCache.size > 20) {
+            const oldestDate = calendarCache.keys().next().value;
+
+            if (oldestDate) {
+                calendarCache.delete(oldestDate);
+            }
+        }
+
         lastCalendarSignature = signature;
+        lastCalendarUrl = url;
 
         window.postMessage(
             {
@@ -254,10 +325,47 @@ if (window.__BOOKSY_INJECT_LOADED__) {
                 type: "BOOKSY_CALENDAR",
                 calendar: data,
                 url: url,
-                date: date
+                date: date,
+                cached: false
             },
             "*"
         );
+    }
+
+    function sendCachedCalendar(date) {
+        if (!date) {
+            return false;
+        }
+
+        const cached = calendarCache.get(date);
+
+        if (!cached) {
+            console.log(
+                "[BOOKSY CACHE] No cached calendar for:",
+                date
+            );
+
+            return false;
+        }
+
+        console.log(
+            "[BOOKSY CACHE] Sending cached calendar:",
+            date
+        );
+
+        window.postMessage(
+            {
+                source: "BOOKSY_EXTENSION",
+                type: "BOOKSY_CALENDAR",
+                calendar: cached.data,
+                url: cached.url,
+                date: date,
+                cached: true
+            },
+            "*"
+        );
+
+        return true;
     }
 
     // ============================================================
@@ -574,7 +682,6 @@ if (window.__BOOKSY_INJECT_LOADED__) {
                     ? el.className
                     : '';
 
-            // Booksy позначає дні сусіднього місяця класом, що містить "_dayOther"
             if (className.includes('_dayOther')) {
                 return false;
             }
@@ -605,56 +712,77 @@ if (window.__BOOKSY_INJECT_LOADED__) {
     async function clickBooksyDate(dateString) {
         console.log('[BOOKSY DATE] Requested date:', dateString);
 
-        const target = getTargetDateInfo(dateString);
-
-        if (!target) {
+        if (!dateString) {
             return false;
         }
 
-        console.log('[BOOKSY DATE] Target:', target);
+        requestedCalendarDate = dateString;
 
-        // 1. Спочатку переходимо саме в потрібний місяць
-        const monthReady = await navigateBooksyToMonth(
-            target.year,
-            target.month
-        );
-
-        if (!monthReady) {
-            console.error(
-                '[BOOKSY DATE] Could not navigate to target month:',
+        if (dateSwitchInProgress) {
+            console.warn(
+                "[BOOKSY DATE] Date switch already in progress:",
                 dateString
             );
+
             return false;
         }
 
-        // 2. Тепер шукаємо число тільки серед днів поточного місяця
-        const dateElement = findBooksyDateElement(target.day);
+        dateSwitchInProgress = true;
 
-        if (!dateElement) {
-            console.error(
-                '[BOOKSY DATE] Target day not found:',
+        try {
+            const target = getTargetDateInfo(dateString);
+
+            if (!target) {
+                return false;
+            }
+
+            console.log('[BOOKSY DATE] Target:', target);
+
+            const monthReady = await navigateBooksyToMonth(
+                target.year,
+                target.month
+            );
+
+            if (!monthReady) {
+                console.error(
+                    '[BOOKSY DATE] Could not navigate to target month:',
+                    dateString
+                );
+
+                return false;
+            }
+
+            const dateElement = findBooksyDateElement(target.day);
+
+            if (!dateElement) {
+                console.error(
+                    '[BOOKSY DATE] Target day not found:',
+                    dateString
+                );
+
+                return false;
+            }
+
+            console.log(
+                '[BOOKSY DATE] Clicking target date:',
+                dateString,
+                dateElement
+            );
+
+            dateElement.click();
+
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            console.log(
+                '[BOOKSY DATE] Date click completed:',
                 dateString
             );
-            return false;
+
+            return true;
+
+        } finally {
+            dateSwitchInProgress = false;
         }
-
-        console.log(
-            '[BOOKSY DATE] Clicking target date:',
-            dateString,
-            dateElement
-        );
-
-        dateElement.click();
-
-        // 3. Даємо Booksy час оновити календар
-        await new Promise(resolve => setTimeout(resolve, 500));
-
-        console.log(
-            '[BOOKSY DATE] Date click completed:',
-            dateString
-        );
-
-        return true;
     }
 
     // ============================================================
@@ -1091,10 +1219,6 @@ if (window.__BOOKSY_INJECT_LOADED__) {
 
             console.log("[BOOKSY CREATE] API base:", base);
 
-            // --------------------------------------------------------
-            // LOAD CATALOG
-            // --------------------------------------------------------
-
             const catalog = await getBooksyCatalogForCreate();
 
             console.log("[BOOKSY CREATE] Catalog:", catalog);
@@ -1114,10 +1238,6 @@ if (window.__BOOKSY_INJECT_LOADED__) {
                     `Не знайдено staffer_id=${staffer_id} у Booksy resources.`
                 );
             }
-
-            // --------------------------------------------------------
-            // BUILD PAYLOAD
-            // --------------------------------------------------------
 
             const service = serviceItem.service;
             const variant = serviceItem.variant;
@@ -1232,10 +1352,6 @@ if (window.__BOOKSY_INJECT_LOADED__) {
                 appointment
             );
 
-            // --------------------------------------------------------
-            // DRY RUN
-            // --------------------------------------------------------
-
             console.log("[BOOKSY CREATE] Starting dry-run...");
 
             const dryRun = await booksyRequest(
@@ -1261,10 +1377,6 @@ if (window.__BOOKSY_INJECT_LOADED__) {
                 );
             }
 
-            // --------------------------------------------------------
-            // REAL CREATE
-            // --------------------------------------------------------
-
             console.log("[BOOKSY CREATE] Creating appointment...");
 
             const created = await booksyRequest(
@@ -1279,10 +1391,6 @@ if (window.__BOOKSY_INJECT_LOADED__) {
                 "[BOOKSY CREATE] APPOINTMENT CREATED:",
                 created
             );
-
-            // --------------------------------------------------------
-            // REPORT RESULT TO BACKEND
-            // --------------------------------------------------------
 
             const backendResponse = await fetch(
                 "http://127.0.0.1:3000/api/booksy/create-appointment/result",
@@ -1310,10 +1418,6 @@ if (window.__BOOKSY_INJECT_LOADED__) {
                     "[BOOKSY CREATE] Appointment was created, but backend result notification failed."
                 );
             }
-
-            // --------------------------------------------------------
-            // REFRESH
-            // --------------------------------------------------------
 
             setTimeout(function () {
                 console.log(
@@ -1393,22 +1497,51 @@ if (window.__BOOKSY_INJECT_LOADED__) {
         }
 
         if (event.data.type === "BOOKSY_FETCH_DATE") {
+            const date = event.data.date;
+
             console.log(
-                "[BOOKSY DATE] FETCH_DATE command:",
-                event.data.date
+                "[BOOKSY DATE] Fetch date command received:",
+                date
             );
 
-            clickBooksyDate(event.data.date)
+            if (!date) {
+                console.warn(
+                    "[BOOKSY DATE] Missing requested date"
+                );
+                return;
+            }
+
+            requestedCalendarDate = date;
+
+            /*
+             * Якщо дані для цієї дати вже є —
+             * одразу віддаємо їх content.js.
+             *
+             * НЕ чекаємо нового XHR.
+             */
+            if (sendCachedCalendar(date)) {
+                console.log(
+                    "[BOOKSY CACHE] Served date from cache:",
+                    date
+                );
+            }
+
+            /*
+             * Після цього все одно клікаємо дату,
+             * щоб Booksy UI реально переключився.
+             */
+            clickBooksyDate(date)
                 .then(function (success) {
                     console.log(
-                        "[BOOKSY DATE] FETCH_DATE result:",
-                        success,
-                        event.data.date
+                        "[BOOKSY DATE] Click result:",
+                        date,
+                        success
                     );
                 })
                 .catch(function (error) {
                     console.error(
-                        "[BOOKSY DATE] FETCH_DATE error:",
+                        "[BOOKSY DATE] Click failed:",
+                        date,
                         error
                     );
                 });

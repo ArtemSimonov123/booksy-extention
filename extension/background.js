@@ -9,6 +9,9 @@ const DATE_REQUEST_INTERVAL = 1500;
 const CREATE_REQUEST_INTERVAL = 1500;
 
 let lastSentRequestedDate = null;
+let lastSentRequestedAt = 0;
+const DATE_REQUEST_DEDUP_MS = 500;
+
 let lastCreateAppointmentRequestId = null;
 
 // ============================================================
@@ -269,7 +272,11 @@ async function checkRequestedBooksyDate() {
             return;
         }
 
-        if (lastSentRequestedDate === data.date) {
+        const now = Date.now();
+        if (
+            lastSentRequestedDate === data.date &&
+            now - lastSentRequestedAt < DATE_REQUEST_DEDUP_MS
+        ) {
             return;
         }
 
@@ -309,6 +316,7 @@ async function checkRequestedBooksyDate() {
 
         if (sent) {
             lastSentRequestedDate = data.date;
+            lastSentRequestedAt = Date.now();
         } else {
             console.error("[BOOKSY] Could not send date request to any Booksy tab.");
         }
