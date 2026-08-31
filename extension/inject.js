@@ -1068,7 +1068,6 @@ if (window.__BOOKSY_INJECT_LOADED__) {
                 );
             }
 
-            return;
             // --------------------------------------------------------
             // REAL CREATE
             // --------------------------------------------------------
@@ -1233,10 +1232,10 @@ if (window.__BOOKSY_INJECT_LOADED__) {
     );
 
     // ============================================================
-    // TEST DRY-RUN FUNCTION
+    // TEST CREATE FUNCTION
     // ============================================================
 
-    window.testBooksyAppointmentDryRun = async function () {
+    window.testBooksyAppointmentCreate = async function () {
         const request = {
             date: "2026-08-26",
             start: "14:00",
@@ -1247,7 +1246,7 @@ if (window.__BOOKSY_INJECT_LOADED__) {
         };
 
         console.log(
-            "[TEST CREATE] Starting dry-run:",
+            "[TEST CREATE] Starting create test:",
             request
         );
 
@@ -1388,16 +1387,16 @@ if (window.__BOOKSY_INJECT_LOADED__) {
             };
 
             console.log(
-                "[TEST CREATE] DRY-RUN PAYLOAD:",
+                "[TEST CREATE] CREATE PAYLOAD:",
                 appointment
             );
 
             console.log(
-                "[TEST CREATE] Sending dry-run..."
+                "[TEST CREATE] Sending create..."
             );
 
             const result = await booksyRequest(
-                `${base}/appointments`,
+                `${base}/appointments/`,
                 {
                     method: "POST",
                     body: JSON.stringify(appointment)
@@ -1405,7 +1404,7 @@ if (window.__BOOKSY_INJECT_LOADED__) {
             );
 
             console.log(
-                "[TEST CREATE] DRY-RUN RESULT:",
+                "[TEST CREATE] CREATE RESULT:",
                 result
             );
 
@@ -1413,7 +1412,7 @@ if (window.__BOOKSY_INJECT_LOADED__) {
 
         } catch (error) {
             console.error(
-                "[TEST CREATE] DRY-RUN FAILED:",
+                "[TEST CREATE] CREATE FAILED:",
                 error
             );
 
@@ -1429,5 +1428,5 @@ if (window.__BOOKSY_INJECT_LOADED__) {
 
             throw error;
         }
-    }
+    };
 }
