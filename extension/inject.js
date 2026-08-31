@@ -181,15 +181,30 @@ if (window.__BOOKSY_INJECT_LOADED__) {
     }
 
     function getDateFromUrl(url) {
-        try {
-            const parsed = new URL(url);
+        if (!url) {
+            return null;
+        }
 
-            return (
+        try {
+            const parsed = new URL(
+                url,
+                window.location.href
+            );
+
+            const date =
                 parsed.searchParams.get("st_nd_date") ||
                 parsed.searchParams.get("start_date") ||
-                null
-            );
+                parsed.searchParams.get("date") ||
+                null;
+
+            return date;
         } catch (error) {
+            console.warn(
+                "[BOOKSY DATE] Cannot parse URL:",
+                url,
+                error
+            );
+
             return null;
         }
     }
@@ -261,11 +276,16 @@ if (window.__BOOKSY_INJECT_LOADED__) {
 
             if (isCalendarUrl(url)) {
                 console.log(
-                    "[BOOKSY] Calendar XHR detected:",
+                    "[BOOKSY DATE] Calendar XHR detected:",
                     url
                 );
 
                 lastCalendarUrl = url;
+
+                console.log(
+                    "[BOOKSY DATE] Calendar XHR date:",
+                    getDateFromUrl(url)
+                );
             }
 
             return originalOpen.call(this, method, url, ...args);
@@ -352,11 +372,16 @@ if (window.__BOOKSY_INJECT_LOADED__) {
 
             if (isCalendarUrl(url)) {
                 console.log(
-                    "[BOOKSY] Calendar FETCH detected:",
+                    "[BOOKSY DATE] Calendar FETCH detected:",
                     url
                 );
 
                 lastCalendarUrl = url;
+
+                console.log(
+                    "[BOOKSY DATE] Calendar FETCH date:",
+                    getDateFromUrl(url)
+                );
 
                 if (response.ok) {
                     try {
@@ -378,90 +403,258 @@ if (window.__BOOKSY_INJECT_LOADED__) {
     })();
 
     // ============================================================
+    // MONTH & TARGET HELPERS
+    // ============================================================
+
+    function getBooksyMonthYear() {
+        const monthEl = document.querySelector('._monthName_1vqly_274');
+
+        if (!monthEl) {
+            console.warn('[BOOKSY DATE] Month name element not found');
+            return null;
+        }
+
+        const text = monthEl.textContent.trim().toLowerCase();
+
+        const months = {
+            'січень': 0,
+            'лютий': 1,
+            'березень': 2,
+            'квітень': 3,
+            'травень': 4,
+            'червень': 5,
+            'липень': 6,
+            'серпень': 7,
+            'вересень': 8,
+            'жовтень': 9,
+            'листопад': 10,
+            'грудень': 11
+        };
+
+        const match = text.match(/^([а-яіїєґ]+)\s+(\d{4})$/i);
+
+        if (!match) {
+            console.warn('[BOOKSY DATE] Cannot parse month:', text);
+            return null;
+        }
+
+        const monthName = match[1];
+        const year = Number(match[2]);
+
+        if (!(monthName in months)) {
+            console.warn('[BOOKSY DATE] Unknown month:', monthName);
+            return null;
+        }
+
+        return {
+            year,
+            month: months[monthName],
+            text
+        };
+    }
+
+    function getTargetDateInfo(dateString) {
+        const date = new Date(`${dateString}T12:00:00`);
+
+        if (Number.isNaN(date.getTime())) {
+            console.error('[BOOKSY DATE] Invalid target date:', dateString);
+            return null;
+        }
+
+        return {
+            year: date.getFullYear(),
+            month: date.getMonth(),
+            day: date.getDate(),
+            dateString
+        };
+    }
+
+    async function navigateBooksyToMonth(targetYear, targetMonth) {
+        const MAX_CLICKS = 24;
+
+        for (let attempt = 0; attempt < MAX_CLICKS; attempt++) {
+            const current = getBooksyMonthYear();
+
+            if (!current) {
+                console.warn('[BOOKSY DATE] Cannot determine current Booksy month');
+                return false;
+            }
+
+            console.log(
+                '[BOOKSY DATE] Month navigation:',
+                `${current.year}-${String(current.month + 1).padStart(2, '0')}`,
+                '→',
+                `${targetYear}-${String(targetMonth + 1).padStart(2, '0')}`
+            );
+
+            if (
+                current.year === targetYear &&
+                current.month === targetMonth
+            ) {
+                console.log('[BOOKSY DATE] Target month reached');
+                return true;
+            }
+
+            const currentValue = current.year * 12 + current.month;
+            const targetValue = targetYear * 12 + targetMonth;
+
+            const selector =
+                targetValue > currentValue
+                    ? '[data-testid="b-date-picker-arrow-right"]'
+                    : '[data-testid="b-date-picker-arrow-left"]';
+
+            const arrow = document.querySelector(selector);
+
+            if (!arrow) {
+                console.error(
+                    '[BOOKSY DATE] Navigation arrow not found:',
+                    selector
+                );
+                return false;
+            }
+
+            console.log(
+                '[BOOKSY DATE] Clicking:',
+                selector
+            );
+
+            arrow.click();
+
+            await new Promise(resolve => setTimeout(resolve, 300));
+
+            const afterClick = getBooksyMonthYear();
+
+            if (!afterClick) {
+                continue;
+            }
+
+            if (
+                afterClick.year === targetYear &&
+                afterClick.month === targetMonth
+            ) {
+                console.log('[BOOKSY DATE] Month successfully changed');
+                return true;
+            }
+        }
+
+        console.error(
+            '[BOOKSY DATE] Failed to navigate to month:',
+            targetYear,
+            targetMonth + 1
+        );
+
+        return false;
+    }
+
+    // ============================================================
     // FIND BOOKSY DATE ELEMENT
     // ============================================================
 
-    function findBooksyDateElement(date) {
-        if (!date) {
+    function findBooksyDateElement(day) {
+        const candidates = Array.from(
+            document.querySelectorAll('[data-testid^="b-date-picker-day-"]')
+        );
+
+        console.log(
+            '[BOOKSY DATE] Looking for current-month day:',
+            day,
+            'candidates:',
+            candidates.length
+        );
+
+        const matching = candidates.filter(el => {
+            const text = (el.textContent || '').trim();
+
+            if (text !== String(day)) {
+                return false;
+            }
+
+            const className =
+                typeof el.className === 'string'
+                    ? el.className
+                    : '';
+
+            // Booksy позначає дні сусіднього місяця класом, що містить "_dayOther"
+            if (className.includes('_dayOther')) {
+                return false;
+            }
+
+            return true;
+        });
+
+        if (matching.length === 0) {
+            console.warn(
+                '[BOOKSY DATE] Current-month day not found:',
+                day
+            );
             return null;
         }
 
-        const parts = date.split("-");
-        if (parts.length !== 3) {
-            return null;
-        }
-
-        const day = Number(parts[2]);
-
-        const all = document.querySelectorAll(
-            "[data-date], [aria-label], [title]"
+        console.log(
+            '[BOOKSY DATE] Current-month day found:',
+            matching[0]
         );
 
-        for (const element of all) {
-            const values = [
-                element.getAttribute("data-date"),
-                element.getAttribute("aria-label"),
-                element.getAttribute("title")
-            ].filter(Boolean);
-
-            for (const value of values) {
-                if (value.includes(date)) {
-                    return element;
-                }
-            }
-        }
-
-        const testElements = document.querySelectorAll(
-            '[data-testid*="date-picker-day"]'
-        );
-
-        for (const element of testElements) {
-            const text = (element.innerText || "").trim();
-
-            if (text === String(day)) {
-                return element;
-            }
-        }
-
-        return null;
+        return matching[0];
     }
 
     // ============================================================
     // CLICK BOOKSY DATE
     // ============================================================
 
-    function clickBooksyDate(date) {
+    async function clickBooksyDate(dateString) {
+        console.log('[BOOKSY DATE] Requested date:', dateString);
+
+        const target = getTargetDateInfo(dateString);
+
+        if (!target) {
+            return false;
+        }
+
+        console.log('[BOOKSY DATE] Target:', target);
+
+        // 1. Спочатку переходимо саме в потрібний місяць
+        const monthReady = await navigateBooksyToMonth(
+            target.year,
+            target.month
+        );
+
+        if (!monthReady) {
+            console.error(
+                '[BOOKSY DATE] Could not navigate to target month:',
+                dateString
+            );
+            return false;
+        }
+
+        // 2. Тепер шукаємо число тільки серед днів поточного місяця
+        const dateElement = findBooksyDateElement(target.day);
+
+        if (!dateElement) {
+            console.error(
+                '[BOOKSY DATE] Target day not found:',
+                dateString
+            );
+            return false;
+        }
+
         console.log(
-            "[BOOKSY] Request to switch Booksy date:",
-            date
+            '[BOOKSY DATE] Clicking target date:',
+            dateString,
+            dateElement
         );
 
-        const currentUrlDate = getDateFromUrl(lastCalendarUrl);
+        dateElement.click();
 
-        if (currentUrlDate === date) {
-            console.log(
-                "[BOOKSY] Date already active:",
-                date
-            );
-            return;
-        }
+        // 3. Даємо Booksy час оновити календар
+        await new Promise(resolve => setTimeout(resolve, 500));
 
-        const element = findBooksyDateElement(date);
-
-        if (element) {
-            console.log(
-                "[BOOKSY] Clicking Booksy date element:",
-                element
-            );
-
-            element.click();
-            return;
-        }
-
-        console.warn(
-            "[BOOKSY] Date element not found in current Booksy calendar:",
-            date
+        console.log(
+            '[BOOKSY DATE] Date click completed:',
+            dateString
         );
+
+        return true;
     }
 
     // ============================================================
@@ -1200,7 +1393,27 @@ if (window.__BOOKSY_INJECT_LOADED__) {
         }
 
         if (event.data.type === "BOOKSY_FETCH_DATE") {
-            clickBooksyDate(event.data.date);
+            console.log(
+                "[BOOKSY DATE] FETCH_DATE command:",
+                event.data.date
+            );
+
+            clickBooksyDate(event.data.date)
+                .then(function (success) {
+                    console.log(
+                        "[BOOKSY DATE] FETCH_DATE result:",
+                        success,
+                        event.data.date
+                    );
+                })
+                .catch(function (error) {
+                    console.error(
+                        "[BOOKSY DATE] FETCH_DATE error:",
+                        error
+                    );
+                });
+
+            return;
         }
     });
 
