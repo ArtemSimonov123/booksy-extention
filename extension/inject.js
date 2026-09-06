@@ -24,6 +24,7 @@ if (window.__BOOKSY_INJECT_LOADED__) {
     let lastCalendarUrl = null;
     let lastCalendarSignature = null;
     let syncTimer = null;
+    let syncInProgress = false;
 
     // Окремий стан для кожної дати.
     // Не можна використовувати один signature для всіх дат,
@@ -786,13 +787,100 @@ if (window.__BOOKSY_INJECT_LOADED__) {
     }
 
     // ============================================================
-    // REFRESH
+    // REFRESH / HEARTBEAT
     // ============================================================
 
-    function refreshCalendar() {
-        console.log(
-            "[BOOKSY SYNC] Waiting for Booksy calendar request"
-        );
+    async function refreshCalendar() {
+        if (syncInProgress) {
+            console.log(
+                "[BOOKSY SYNC] Heartbeat already in progress"
+            );
+            return false;
+        }
+
+        syncInProgress = true;
+
+        try {
+            console.log("[BOOKSY SYNC] Heartbeat started");
+
+            const base = getBooksyApiBase();
+
+            if (!base) {
+                console.warn(
+                    "[BOOKSY SYNC] Cannot determine Booksy API base"
+                );
+                return false;
+            }
+
+            const date =
+                requestedCalendarDate ||
+                getDateFromUrl(lastCalendarUrl);
+
+            if (!date) {
+                console.warn(
+                    "[BOOKSY SYNC] No active calendar date for heartbeat"
+                );
+                return false;
+            }
+
+            const url =
+                `${base}/calendar` +
+                `?start_date=${encodeURIComponent(date)}` +
+                `&end_date=${encodeURIComponent(date)}` +
+                `&include_unconfirmed=true` +
+                `&version=3` +
+                `&resources_per_page=2`;
+
+            console.log(
+                "[BOOKSY SYNC] Heartbeat calendar request:",
+                url
+            );
+
+            const response = await fetch(url, {
+                method: "GET",
+                credentials: "include",
+                cache: "no-store",
+                headers: {
+                    "Accept": "application/json, text/plain, */*"
+                }
+            });
+
+            console.log(
+                "[BOOKSY SYNC] Heartbeat response:",
+                response.status
+            );
+
+            if (!response.ok) {
+                console.warn(
+                    "[BOOKSY SYNC] Heartbeat failed:",
+                    response.status
+                );
+
+                return false;
+            }
+
+            const data = await response.json();
+
+            console.log(
+                "[BOOKSY SYNC] Heartbeat calendar received:",
+                date
+            );
+
+            sendCalendar(data, url);
+
+            return true;
+
+        } catch (error) {
+            console.error(
+                "[BOOKSY SYNC] Heartbeat error:",
+                error
+            );
+
+            return false;
+
+        } finally {
+            syncInProgress = false;
+        }
     }
 
     // ============================================================
