@@ -61,6 +61,20 @@ app.use(
 
 let latestCalendar = null;
 
+// =====================================================
+// BOOKSY CATALOG STORAGE
+// =====================================================
+//
+// Дані приходять з Booksy через extension.
+// Admin читає їх через GET /api/booksy/catalog.
+//
+let latestBooksyCatalog = {
+    staffers: [],
+    services: [],
+    clients: [],
+    received_at: null
+};
+
 
 // =====================================================
 // PENDING BOOKSY DATE REQUEST
@@ -547,6 +561,121 @@ app.post(
 
             bookings_count:
                 bookingsCount
+
+        });
+
+    }
+);
+
+
+// =====================================================
+// BOOKSY CATALOG
+// =====================================================
+
+// -----------------------------------------------------
+// GET CATALOG FOR ADMIN
+// -----------------------------------------------------
+
+app.get(
+    "/api/booksy/catalog",
+    (req, res) => {
+
+        res.set(
+            "Cache-Control",
+            "no-store"
+        );
+
+        res.json({
+            ok: true,
+
+            staffers:
+                latestBooksyCatalog.staffers,
+
+            services:
+                latestBooksyCatalog.services,
+
+            clients:
+                latestBooksyCatalog.clients,
+
+            received_at:
+                latestBooksyCatalog.received_at
+        });
+
+    }
+);
+
+// -----------------------------------------------------
+// RECEIVE CATALOG FROM EXTENSION
+// -----------------------------------------------------
+
+app.post(
+    "/api/booksy/catalog",
+    (req, res) => {
+
+        const body =
+            req.body || {};
+
+
+        const staffers =
+            Array.isArray(body.staffers)
+                ? body.staffers
+                : [];
+
+
+        const services =
+            Array.isArray(body.services)
+                ? body.services
+                : [];
+
+
+        const clients =
+            Array.isArray(body.clients)
+                ? body.clients
+                : [];
+
+
+        latestBooksyCatalog = {
+
+            staffers,
+
+            services,
+
+            clients,
+
+            received_at:
+                body.received_at ||
+                new Date().toISOString()
+
+        };
+
+
+        console.log(
+            "[BACKEND] Booksy catalog received:",
+            {
+                staffers:
+                    staffers.length,
+
+                services:
+                    services.length,
+
+                clients:
+                    clients.length
+            }
+        );
+
+
+        res.json({
+
+            ok: true,
+
+            staffers:
+                staffers.length,
+
+            services:
+                services.length,
+
+            clients:
+                clients.length
 
         });
 

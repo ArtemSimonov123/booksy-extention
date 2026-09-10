@@ -254,18 +254,6 @@ if (window.__BOOKSY_INJECT_LOADED__) {
         console.log("[BOOKSY] URL:", url);
         console.log("[BOOKSY] Date:", date);
 
-        /*
-         * Кешуємо календар ОКРЕМО для кожної дати.
-         *
-         * Наприклад:
-         * 2026-09-01 -> data1
-         * 2026-09-02 -> data2
-         *
-         * Тому після:
-         * 1 -> 2 -> 1 -> 2
-         *
-         * ми не втрачаємо попередні дані.
-         */
         const cached = calendarCache.get(date);
 
         if (cached && cached.signature === signature) {
@@ -274,13 +262,6 @@ if (window.__BOOKSY_INJECT_LOADED__) {
                 date
             );
 
-            /*
-             * Якщо саме ця дата зараз потрібна UI,
-             * все одно можна повторно передати cached data.
-             *
-             * Це важливо при поверненні:
-             * 1 -> 2 -> 1
-             */
             if (requestedCalendarDate === date) {
                 window.postMessage(
                     {
@@ -305,10 +286,6 @@ if (window.__BOOKSY_INJECT_LOADED__) {
             receivedAt: Date.now()
         });
 
-        /*
-         * Захист від нескінченного росту cache.
-         * Тримаємо максимум 20 дат.
-         */
         if (calendarCache.size > 20) {
             const oldestDate = calendarCache.keys().next().value;
 
@@ -1255,6 +1232,87 @@ if (window.__BOOKSY_INJECT_LOADED__) {
     }
 
     // ============================================================
+    // SYNC CATALOG TO ADMIN BACKEND
+    // ============================================================
+
+    let catalogSyncInProgress = false;
+
+    async function syncBooksyCatalogToBackend() {
+        if (catalogSyncInProgress) {
+            console.log(
+                "[BOOKSY CATALOG] Sync already in progress"
+            );
+            return false;
+        }
+
+        catalogSyncInProgress = true;
+
+        try {
+            console.log(
+                "[BOOKSY CATALOG] Loading catalog for Admin..."
+            );
+
+            const catalog =
+                await getBooksyCatalogForCreate();
+
+            const payload = {
+                staffers: catalog.staffers || [],
+                services: catalog.services || [],
+                clients: [],
+                received_at: new Date().toISOString()
+            };
+
+            console.log(
+                "[BOOKSY CATALOG] Sending to backend:",
+                {
+                    staffers: payload.staffers.length,
+                    services: payload.services.length,
+                    clients: payload.clients.length
+                }
+            );
+
+            const response = await fetch(
+                "http://127.0.0.1:3000/api/booksy/catalog",
+                {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify(payload)
+                }
+            );
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(
+                    result?.error ||
+                    `Backend HTTP ${response.status}`
+                );
+            }
+
+            console.log(
+                "[BOOKSY CATALOG] Backend sync successful:",
+                result
+            );
+
+            return true;
+
+        } catch (error) {
+
+            console.error(
+                "[BOOKSY CATALOG] Sync failed:",
+                error
+            );
+
+            return false;
+
+        } finally {
+            catalogSyncInProgress = false;
+        }
+    }
+
+    // ============================================================
     // FIND SERVICE / STAFFER
     // ============================================================
 
@@ -1601,12 +1659,6 @@ if (window.__BOOKSY_INJECT_LOADED__) {
 
             requestedCalendarDate = date;
 
-            /*
-             * Якщо дані для цієї дати вже є —
-             * одразу віддаємо їх content.js.
-             *
-             * НЕ чекаємо нового XHR.
-             */
             if (sendCachedCalendar(date)) {
                 console.log(
                     "[BOOKSY CACHE] Served date from cache:",
@@ -1614,10 +1666,6 @@ if (window.__BOOKSY_INJECT_LOADED__) {
                 );
             }
 
-            /*
-             * Після цього все одно клікаємо дату,
-             * щоб Booksy UI реально переключився.
-             */
             clickBooksyDate(date)
                 .then(function (success) {
                     console.log(
@@ -1657,6 +1705,12 @@ if (window.__BOOKSY_INJECT_LOADED__) {
             refreshCalendar,
             SYNC_INTERVAL
         );
+
+        // Даємо Booksy час завантажити сторінку,
+        // перехопити API URL та авторизацію.
+        setTimeout(function () {
+            syncBooksyCatalogToBackend();
+        }, 3000);
     }
 
     startSync();
