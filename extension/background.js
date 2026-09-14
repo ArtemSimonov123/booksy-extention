@@ -10,6 +10,31 @@ const REFRESH_REQUEST_INTERVAL = 1500;
 
 let lastCreateAppointmentRequestId = null;
 let lastRefreshRequestId = null;
+let lastCalendarTabId = null;
+
+async function rememberCalendarTab(tabId) {
+    if (!tabId) {
+        return;
+    }
+
+    lastCalendarTabId = tabId;
+    await chrome.storage.session.set({ booksyCalendarTabId: tabId });
+    console.log("[BOOKSY] Calendar source tab remembered:", tabId);
+}
+
+async function getRememberedCalendarTabId() {
+    if (lastCalendarTabId) {
+        return lastCalendarTabId;
+    }
+
+    const stored = await chrome.storage.session.get("booksyCalendarTabId");
+    lastCalendarTabId = stored.booksyCalendarTabId || null;
+    return lastCalendarTabId;
+}
+
+function isBooksyTab(tab) {
+    return Boolean(tab?.id && tab.url && /^https:\/\/(?:[^/]+\.)?booksy\.com\//.test(tab.url));
+}
 
 // ============================================================
 // MESSAGE DISPATCHER / LISTENERS
@@ -138,6 +163,12 @@ chrome.runtime.onMessage.addListener(function (
     if (message.type === "BOOKSY_CALENDAR") {
         console.log("[BOOKSY] Sending calendar to backend...");
 
+        // The event originates only from the tab that actually loaded the
+        // business calendar. Save it before any later client-side activity.
+        rememberCalendarTab(sender.tab?.id).catch(function (error) {
+            console.warn("[BOOKSY] Cannot remember calendar tab:", error);
+        });
+
         fetch(BACKEND_URL + "/api/booksy/calendar", {
             method: "POST",
             headers: {
@@ -265,23 +296,41 @@ async function checkRefreshCalendarRequest() {
             return;
         }
 
-        const tabs = await chrome.tabs.query({
-            url: ["https://booksy.com/*", "https://*.booksy.com/*"]
-        });
+        let tab = null;
+        const rememberedTabId = await getRememberedCalendarTabId();
 
-        if (!tabs.length) {
+        if (rememberedTabId) {
+            try {
+                const rememberedTab = await chrome.tabs.get(rememberedTabId);
+                if (isBooksyTab(rememberedTab)) {
+                    tab = rememberedTab;
+                }
+            } catch (error) {
+                // The calendar tab was closed; clear the stale reference.
+                lastCalendarTabId = null;
+                await chrome.storage.session.remove("booksyCalendarTabId");
+            }
+        }
+
+        // This fallback only applies before the extension has observed the
+        // first calendar response. Afterwards we never choose a client tab.
+        if (!tab) {
+            const tabs = await chrome.tabs.query({
+                url: ["https://booksy.com/*", "https://*.booksy.com/*"]
+            });
+            tab = tabs.find(item => item.active) || tabs[0] || null;
+        }
+
+        if (!tab?.id) {
             console.warn("[BOOKSY] No Booksy tab available for refresh.");
             return;
         }
 
-        const tab = tabs.find(item => item.active) || tabs[0];
-        const delivered = await sendMessageToBooksyTab(tab.id, {
-            type: "BOOKSY_REFRESH_CALENDAR"
-        });
-
-        if (!delivered) {
-            return;
-        }
+        // Reloading through Chrome, instead of a page-level postMessage,
+        // survives Booksy overlays and SPA state changes caused by a new
+        // customer booking.
+        await chrome.tabs.reload(tab.id);
+        console.log("[BOOKSY] Reloaded calendar source tab:", tab.id);
 
         lastRefreshRequestId = request.id;
         await fetch(BACKEND_URL + "/api/booksy/refresh/ack", {
