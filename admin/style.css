@@ -99,14 +99,38 @@ button {
 }
 
 .refresh-button {
-  justify-self: end;
   padding: 9px 14px;
   font-size: 13px;
+}
+
+.top-actions {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.top-actions #createAppointmentButton {
+  margin-left: 0 !important;
+  padding: 9px 14px !important;
+  border: 1px solid #1f2937 !important;
+  border-radius: 9px !important;
+  background: #1f2937 !important;
+  color: #fff;
+}
+
+.top-actions #createAppointmentButton:hover {
+  background: #374151 !important;
 }
 
 .nav-button:hover,
 .refresh-button:hover {
   background: #f7f8fa;
+}
+
+.refresh-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 main {
@@ -158,13 +182,14 @@ main {
 .staff-headers,
 .staff-columns {
   display: grid;
-  grid-template-columns: repeat(var(--staff-count, 1), minmax(180px, 1fr));
+  grid-template-columns: repeat(var(--staff-count, 1), minmax(260px, 1fr));
   min-width: 0;
 }
 
 .staff-header {
   padding: 14px 16px;
   border-left: 1px solid #edf0f2;
+  background: #fff;
 }
 
 .staff-name {
@@ -224,8 +249,8 @@ main {
   position: absolute;
   left: 6px;
   right: 6px;
-  min-height: 45px;
-  padding: 7px 9px;
+  min-height: 42px;
+  padding: 5px 9px;
   overflow: hidden;
   border-left: 4px solid #5fb878;
   border-radius: 9px;
@@ -233,6 +258,11 @@ main {
   color: #1e2b22;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   cursor: pointer;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  grid-template-rows: 16px 14px;
+  align-content: start;
+  column-gap: 8px;
 }
 
 .booking:hover {
@@ -240,22 +270,29 @@ main {
 }
 
 .booking-time {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
+  line-height: 16px;
+  white-space: nowrap;
 }
 
 .booking-customer {
-  margin-top: 3px;
-  font-size: 13px;
+  margin: 0;
+  min-width: 0;
+  font-size: 12px;
   font-weight: 600;
+  line-height: 16px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .booking-service {
-  margin-top: 2px;
-  font-size: 12px;
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 11px;
+  line-height: 14px;
+  color: #516057;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

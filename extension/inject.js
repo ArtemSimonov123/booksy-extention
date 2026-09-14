@@ -1273,9 +1273,24 @@ if (window.__BOOKSY_INJECT_LOADED__) {
             }
         }
 
+        const clientsById = new Map();
+        const calendarBookings = lastCalendarWeekData?.bookings || {};
+
+        Object.values(calendarBookings).forEach(function (booking) {
+            const client = booking?.customer;
+            if (client?.id && client?.name) {
+                clientsById.set(String(client.id), {
+                    id: client.id,
+                    name: client.name,
+                    phone: client.phone || ""
+                });
+            }
+        });
+
         return {
             services: services,
-            staffers: staffers
+            staffers: staffers,
+            clients: Array.from(clientsById.values())
         };
     }
 
@@ -1306,7 +1321,7 @@ if (window.__BOOKSY_INJECT_LOADED__) {
             const payload = {
                 staffers: catalog.staffers || [],
                 services: catalog.services || [],
-                clients: [],
+                clients: catalog.clients || [],
                 received_at: new Date().toISOString()
             };
 
@@ -1394,6 +1409,7 @@ if (window.__BOOKSY_INJECT_LOADED__) {
                 end,
                 staffer_id,
                 variant_id,
+                client_id,
                 business_secret_note
             } = request;
 
@@ -1484,9 +1500,16 @@ if (window.__BOOKSY_INJECT_LOADED__) {
                 consent_forms: [],
                 appointment_uid: null,
                 _version: null,
-                customer: {
-                    mode: "walk-in"
-                },
+                // Booksy uses customer-card for an existing customer.  With no
+                // selected client it must stay a walk-in appointment.
+                customer: client_id
+                    ? {
+                        id: client_id,
+                        mode: "customer-card"
+                    }
+                    : {
+                        mode: "walk-in"
+                    },
                 business_note: "",
                 business_secret_note: business_secret_note || "",
                 subbookings: [

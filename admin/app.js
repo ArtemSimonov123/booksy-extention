@@ -58,6 +58,35 @@ function formatHumanDate(date) {
     ).format(date);
 }
 
+async function refreshBooksyCalendar() {
+    const button = document.getElementById("refreshButton");
+    button.disabled = true;
+    button.textContent = "Оновлення Booksy…";
+
+    try {
+        const response = await fetch("/api/booksy/refresh", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({})
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) {
+            throw new Error(data.error || `HTTP ${response.status}`);
+        }
+
+        statusTextElement.textContent = "Booksy перезавантажується…";
+    } catch (error) {
+        showError(`Не вдалося оновити Booksy: ${error.message}`);
+    } finally {
+        // The actual fresh data arrives through the native Booksy reload and
+        // the existing SSE calendar update, not from this request itself.
+        setTimeout(() => {
+            button.disabled = false;
+            button.textContent = "↻ Оновити Booksy";
+        }, 2500);
+    }
+}
+
 
 // =========================================================
 // REQUEST BOOKSY DATE
@@ -127,7 +156,7 @@ async function requestBooksyDate(date) {
 async function changeDay(amount) {
 
     selectedDate.setDate(
-        selectedDate.getDate() + amount * 7
+        selectedDate.getDate() + amount
     );
 
     currentDateElement.textContent =
@@ -234,7 +263,20 @@ function createAppointmentButton() {
 // CREATE MODAL
 // =========================================================
 
-function openCreateAppointmentModal() {
+function escapeHtml(value) {
+    return String(value || "").replace(/[&<>'"]/g, character => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
+    })[character]);
+}
+
+async function getBooksyCatalog() {
+    const response = await fetch("/api/booksy/catalog", { cache: "no-store" });
+    const catalog = await response.json();
+    if (!response.ok || !catalog.ok) throw new Error(catalog.error || "Не вдалося отримати каталог Booksy.");
+    return catalog;
+}
+
+async function openCreateAppointmentModal() {
 
     if (
         document.getElementById(
@@ -243,6 +285,24 @@ function openCreateAppointmentModal() {
     ) {
         return;
     }
+
+    let catalog;
+    try {
+        catalog = await getBooksyCatalog();
+    } catch (error) {
+        alert(error.message);
+        return;
+    }
+
+    const stafferOptions = (catalog.staffers || []).map(staffer =>
+        `<option value="${escapeHtml(staffer.id)}">${escapeHtml(staffer.name)}</option>`
+    ).join("");
+    const serviceOptions = (catalog.services || []).map(service =>
+        `<option value="${escapeHtml(service.variant_id)}" data-duration="${Number(service.duration) || 30}">${escapeHtml(service.name)}${service.variant_label ? ` — ${escapeHtml(service.variant_label)}` : ""}${service.price ? ` (${escapeHtml(service.price)} zł)` : ""}</option>`
+    ).join("");
+    const clientOptions = (catalog.clients || []).map(client =>
+        `<option value="${escapeHtml(client.id)}">${escapeHtml(client.name)}${client.phone ? ` — ${escapeHtml(client.phone)}` : ""}</option>`
+    ).join("");
 
     const overlay =
         document.createElement("div");
@@ -336,34 +396,28 @@ function openCreateAppointmentModal() {
             Працівник
         </label>
 
-        <input
+        <select
             id="createStafferId"
-            type="text"
-            placeholder="staffer_id"
             style="width:100%;box-sizing:border-box;margin-bottom:14px;padding:10px"
-        >
+        ><option value="">Оберіть працівника</option>${stafferOptions}</select>
 
         <label style="display:block;margin-bottom:6px">
             ID послуги
         </label>
 
-        <input
+        <select
             id="createVariantId"
-            type="text"
-            placeholder="service variant id"
             style="width:100%;box-sizing:border-box;margin-bottom:14px;padding:10px"
-        >
+        ><option value="">Оберіть послугу</option>${serviceOptions}</select>
 
         <label style="display:block;margin-bottom:6px">
             ID клієнта
         </label>
 
-        <input
+        <select
             id="createClientId"
-            type="text"
-            placeholder="client id"
             style="width:100%;box-sizing:border-box;margin-bottom:14px;padding:10px"
-        >
+        ><option value="">Без клієнта (walk-in)</option>${clientOptions}</select>
 
         <label style="display:block;margin-bottom:6px">
             Примітка
@@ -405,6 +459,21 @@ function openCreateAppointmentModal() {
     overlay.appendChild(modal);
 
     document.body.appendChild(overlay);
+
+    if (!catalog.staffers?.length || !catalog.services?.length) {
+        const error = document.getElementById("createAppointmentError");
+        error.textContent = "Каталог Booksy ще завантажується. Відкрийте календар Booksy у вкладці та повторіть спробу.";
+        error.style.display = "block";
+    }
+
+    document.getElementById("createVariantId").addEventListener("change", function () {
+        const duration = Number(this.selectedOptions[0]?.dataset.duration || 0);
+        if (!duration) return;
+        const start = document.getElementById("createStart").value || "10:00";
+        const [hours, minutes] = start.split(":").map(Number);
+        const end = new Date(2000, 0, 1, hours, minutes + duration);
+        document.getElementById("createEnd").value = `${String(end.getHours()).padStart(2, "0")}:${String(end.getMinutes()).padStart(2, "0")}`;
+    });
 
 
     document
@@ -486,8 +555,7 @@ async function submitCreateAppointment() {
         !start ||
         !end ||
         !stafferId ||
-        !variantId ||
-        !clientId
+        !variantId
     ) {
 
         errorElement.textContent =
@@ -538,7 +606,7 @@ async function submitCreateAppointment() {
                             variantId,
 
                         client_id:
-                            clientId,
+                            clientId || null,
 
                         business_secret_note:
                             note
@@ -708,7 +776,9 @@ async function loadCalendar() {
 
         if (data.calendar) {
 
-            renderWeekCalendar(data.calendar);
+            // The backend keeps a seven-day Booksy response, while the admin
+            // renders exactly one selected day from that local range.
+            renderCalendar(getCalendarForDate(data.calendar, date));
 
             setOnline();
 
@@ -874,6 +944,12 @@ function renderCalendar(calendar) {
 
     const resources =
         calendar.resources || [];
+
+    // Both the header and the schedule must use the same number of columns.
+    // Without this CSS variable all barbers are rendered into one column.
+    const staffCount = Math.max(resources.length, 1);
+    staffHeadersElement.style.setProperty("--staff-count", staffCount);
+    staffColumnsElement.style.setProperty("--staff-count", staffCount);
 
 
     staffHeadersElement.innerHTML =
@@ -1317,7 +1393,7 @@ document
     .getElementById("refreshButton")
     .addEventListener(
         "click",
-        loadCalendar
+        refreshBooksyCalendar
     );
 
 

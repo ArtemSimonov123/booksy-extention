@@ -61,6 +61,9 @@ app.use(
 
 let latestCalendar = null;
 
+let pendingBooksyRefresh = null;
+let refreshRequestCounter = 0;
+
 // =====================================================
 // BOOKSY CATALOG STORAGE
 // =====================================================
@@ -288,6 +291,36 @@ app.get(
     }
 );
 
+
+// =====================================================
+// REQUEST A NATIVE BOOKSY PAGE RELOAD
+// =====================================================
+
+app.post("/api/booksy/refresh", (req, res) => {
+    const id = ++refreshRequestCounter;
+    pendingBooksyRefresh = {
+        id,
+        requested_at: new Date().toISOString()
+    };
+
+    res.json({ ok: true, requested: true, request_id: id });
+});
+
+app.get("/api/booksy/refresh", (req, res) => {
+    res.set("Cache-Control", "no-store");
+    res.json({
+        ok: true,
+        requested: Boolean(pendingBooksyRefresh),
+        request: pendingBooksyRefresh
+    });
+});
+
+app.post("/api/booksy/refresh/ack", (req, res) => {
+    if (pendingBooksyRefresh && Number(req.body?.request_id) === pendingBooksyRefresh.id) {
+        pendingBooksyRefresh = null;
+    }
+    res.json({ ok: true });
+});
 
 // =====================================================
 // SSE REALTIME
@@ -754,8 +787,7 @@ app.post(
             !start ||
             !end ||
             !staffer_id ||
-            !variant_id ||
-            !client_id
+            !variant_id
         ) {
 
             return res.status(400).json({
@@ -763,7 +795,7 @@ app.post(
                 ok: false,
 
                 error:
-                    "date, start, end, staffer_id, variant_id and client_id are required"
+                    "date, start, end, staffer_id and variant_id are required"
 
             });
 

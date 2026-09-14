@@ -6,8 +6,10 @@ console.log("[BOOKSY] Background started");
 
 const BACKEND_URL = "http://127.0.0.1:3000";
 const CREATE_REQUEST_INTERVAL = 1500;
+const REFRESH_REQUEST_INTERVAL = 1500;
 
 let lastCreateAppointmentRequestId = null;
+let lastRefreshRequestId = null;
 
 // ============================================================
 // MESSAGE DISPATCHER / LISTENERS
@@ -247,6 +249,52 @@ async function sendMessageToBooksyTab(tabId, message) {
 }
 
 // ============================================================
+// ADMIN -> BOOKSY PAGE RELOAD
+// ============================================================
+
+async function checkRefreshCalendarRequest() {
+    try {
+        const response = await fetch(BACKEND_URL + "/api/booksy/refresh", {
+            method: "GET",
+            cache: "no-store"
+        });
+        const data = await response.json();
+        const request = data?.request;
+
+        if (!data?.requested || !request?.id || lastRefreshRequestId === request.id) {
+            return;
+        }
+
+        const tabs = await chrome.tabs.query({
+            url: ["https://booksy.com/*", "https://*.booksy.com/*"]
+        });
+
+        if (!tabs.length) {
+            console.warn("[BOOKSY] No Booksy tab available for refresh.");
+            return;
+        }
+
+        const tab = tabs.find(item => item.active) || tabs[0];
+        const delivered = await sendMessageToBooksyTab(tab.id, {
+            type: "BOOKSY_REFRESH_CALENDAR"
+        });
+
+        if (!delivered) {
+            return;
+        }
+
+        lastRefreshRequestId = request.id;
+        await fetch(BACKEND_URL + "/api/booksy/refresh/ack", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ request_id: request.id })
+        });
+    } catch (error) {
+        console.error("[BOOKSY] Refresh polling error:", error);
+    }
+}
+
+// ============================================================
 // ADMIN -> BOOKSY CREATE APPOINTMENT
 // ============================================================
 
@@ -329,5 +377,7 @@ async function checkCreateAppointmentRequest() {
 // ============================================================
 
 setInterval(checkCreateAppointmentRequest, CREATE_REQUEST_INTERVAL);
+setInterval(checkRefreshCalendarRequest, REFRESH_REQUEST_INTERVAL);
 
 checkCreateAppointmentRequest();
+checkRefreshCalendarRequest();
