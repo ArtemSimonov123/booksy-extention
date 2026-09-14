@@ -33,6 +33,8 @@ const statusTextElement =
 
 const refreshLogEntriesElement = document.getElementById("refreshLogEntries");
 const refreshLogStatusElement = document.getElementById("refreshLogStatus");
+const appointmentLogEntriesElement = document.getElementById("appointmentLogEntries");
+const appointmentLogStatusElement = document.getElementById("appointmentLogStatus");
 
 function renderRefreshLog(entries, pending) {
     refreshLogStatusElement.textContent = pending
@@ -57,6 +59,32 @@ async function loadRefreshLog() {
         if (data.ok) renderRefreshLog(data.entries || [], data.pending);
     } catch (error) {
         console.warn("[ADMIN] Cannot load refresh log:", error);
+    }
+}
+
+function renderAppointmentLog(entries, pending) {
+    appointmentLogStatusElement.textContent = pending
+        ? `Поточний стан: ${pending.status || "очікування"} (запит #${pending.id})`
+        : "Немає активного створення.";
+    appointmentLogEntriesElement.innerHTML = "";
+    entries.slice(0, 12).forEach(entry => {
+        const item = document.createElement("li");
+        item.className = entry.stage || "";
+        const time = new Date(entry.at).toLocaleTimeString("uk-UA", {
+            hour: "2-digit", minute: "2-digit", second: "2-digit"
+        });
+        item.innerHTML = `<time>${time}</time>${escapeHtml(entry.message)}`;
+        appointmentLogEntriesElement.appendChild(item);
+    });
+}
+
+async function loadAppointmentLog() {
+    try {
+        const response = await fetch("/api/booksy/create-appointment/log", { cache: "no-store" });
+        const data = await response.json();
+        if (data.ok) renderAppointmentLog(data.entries || [], data.pending);
+    } catch (error) {
+        console.warn("[ADMIN] Cannot load appointment log:", error);
     }
 }
 
@@ -695,13 +723,10 @@ async function submitCreateAppointment() {
                 selectedDate
             );
 
+        document.getElementById("appointmentLogPanel").open = true;
+        loadAppointmentLog();
 
         await loadCalendar();
-
-
-        alert(
-            "Запис успішно створено"
-        );
 
 
     } catch (error) {
@@ -1151,6 +1176,8 @@ function renderBooking(
     startHour
 ) {
 
+    const source = getBookingSource(booking);
+
     const from =
         formatTime(
             booking.booked_from
@@ -1185,7 +1212,7 @@ function renderBooking(
         );
 
     bookingElement.className =
-        "booking";
+        `booking booking--${source.key}`;
 
 
     bookingElement.style.top =
@@ -1228,9 +1255,15 @@ function renderBooking(
     service.className =
         "booking-service";
 
-    service.textContent =
-        booking.service?.name ||
-        "Послуга";
+    const serviceName = document.createElement("span");
+    serviceName.textContent = booking.service?.name || "Послуга";
+
+    const sourceLabel = document.createElement("span");
+    sourceLabel.className = "booking-source";
+    sourceLabel.textContent = source.label;
+
+    service.appendChild(serviceName);
+    service.appendChild(sourceLabel);
 
 
     bookingElement.appendChild(
@@ -1263,6 +1296,19 @@ function renderBooking(
         bookingElement
     );
 
+}
+
+function getBookingSource(booking) {
+    if (booking._created_in_admin) {
+        return { key: "admin", label: "Адмінка" };
+    }
+
+    // Booksy calendar responses mark customer-made appointments with type C.
+    if (booking.type === "C") {
+        return { key: "booksy-client", label: "Booksy клієнт" };
+    }
+
+    return { key: "booksy", label: "Booksy" };
 }
 
 
@@ -1359,6 +1405,10 @@ function startRealtimeSync() {
                         loadRefreshLog();
                     }
 
+                    if (message.type === "APPOINTMENT_LOG") {
+                        loadAppointmentLog();
+                    }
+
                     return;
 
                 }
@@ -1441,5 +1491,7 @@ createAppointmentButton();
 startRealtimeSync();
 
 loadRefreshLog();
+
+loadAppointmentLog();
 
 loadCalendar();

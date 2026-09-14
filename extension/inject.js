@@ -1620,6 +1620,9 @@ if (window.__BOOKSY_INJECT_LOADED__) {
                         ok: true,
                         request_id: request.id,
                         date: request.date,
+                        created_booking_ids: (created?.appointment?.subbookings || [])
+                            .map(item => item?.id)
+                            .filter(Boolean),
                         result: created
                     })
                 }

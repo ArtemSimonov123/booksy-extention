@@ -60,10 +60,14 @@ app.use(
 // =====================================================
 
 let latestCalendar = null;
+// IDs of subbookings created through this admin. Booksy uses the same type B
+// for all business-side bookings, so type alone cannot identify our admin.
+const adminCreatedBookingIds = new Set();
 
 let pendingBooksyRefresh = null;
 let refreshRequestCounter = 0;
 const refreshLogs = [];
+const appointmentLogs = [];
 
 // =====================================================
 // BOOKSY CATALOG STORAGE
@@ -117,6 +121,32 @@ function addRefreshLog(stage, message, requestId = null) {
     refreshLogs.splice(50);
     console.log(`[REFRESH ${stage}] ${message}`);
     broadcastRefreshLog(entry);
+    return entry;
+}
+
+function broadcastAppointmentLog(entry) {
+    const message = JSON.stringify({ type: "APPOINTMENT_LOG", entry });
+    for (const client of realtimeClients) {
+        try {
+            client.write(`data: ${message}\n\n`);
+        } catch (error) {
+            realtimeClients.delete(client);
+        }
+    }
+}
+
+function addAppointmentLog(stage, message, requestId = null) {
+    const entry = {
+        id: Date.now() + Math.random(),
+        at: new Date().toISOString(),
+        request_id: requestId,
+        stage,
+        message
+    };
+    appointmentLogs.unshift(entry);
+    appointmentLogs.splice(50);
+    console.log(`[CREATE ${stage}] ${message}`);
+    broadcastAppointmentLog(entry);
     return entry;
 }
 
@@ -282,7 +312,6 @@ app.get(
         if (!latestCalendar) {
             return res.json({
                 ok: true,
-                ok: true,
                 calendar: null
             });
         }
@@ -300,12 +329,27 @@ app.get(
             });
         }
 
+        const calendar = latestCalendar.calendar;
+        const bookings = calendar.bookings || {};
+        const markedCalendar = {
+            ...calendar,
+            bookings: Object.fromEntries(
+                Object.entries(bookings).map(([id, booking]) => [
+                    id,
+                    {
+                        ...booking,
+                        _created_in_admin: adminCreatedBookingIds.has(String(id))
+                    }
+                ])
+            )
+        };
+
         res.json({
 
             ok: true,
 
             calendar:
-                latestCalendar.calendar,
+                markedCalendar,
 
             start_date: startDate,
 
@@ -891,6 +935,15 @@ app.post(
 
         };
 
+        addAppointmentLog("queued", "Запит на створення запису створено в адмінці.", id);
+
+        setTimeout(() => {
+            if (pendingAppointmentRequest?.id === id) {
+                addAppointmentLog("timeout", "Booksy не підтвердив створення запису протягом 60 секунд.", id);
+                pendingAppointmentRequest = null;
+            }
+        }, 60000);
+
 
         res.json({
 
@@ -905,6 +958,25 @@ app.post(
 
     }
 );
+
+app.post("/api/booksy/create-appointment/ack", (req, res) => {
+    if (pendingAppointmentRequest && Number(req.body?.request_id) === pendingAppointmentRequest.id) {
+        pendingAppointmentRequest.status = "delivered";
+        addAppointmentLog("delivered", "Розширення передало команду у вкладку календаря Booksy.", pendingAppointmentRequest.id);
+    }
+    res.json({ ok: true });
+});
+
+app.post("/api/booksy/create-appointment/log", (req, res) => {
+    const { request_id: requestId, stage, message } = req.body || {};
+    addAppointmentLog(stage || "extension", message || "Подія від розширення.", requestId || null);
+    res.json({ ok: true });
+});
+
+app.get("/api/booksy/create-appointment/log", (req, res) => {
+    res.set("Cache-Control", "no-store");
+    res.json({ ok: true, pending: pendingAppointmentRequest, entries: appointmentLogs });
+});
 
 
 // EXTENSION -> GET COMMAND
@@ -997,10 +1069,24 @@ app.post(
             result.ok
         ) {
 
+            addAppointmentLog("created", "Booksy успішно створив запис.", result.request_id || null);
+
+            for (const bookingId of result.created_booking_ids || []) {
+                adminCreatedBookingIds.add(String(bookingId));
+            }
+
+            console.log(
+                "[BACKEND] Marked admin-created bookings:",
+                result.created_booking_ids || []
+            );
+
             broadcastCalendarUpdate(
                 result.date || null
             );
 
+        }
+        else {
+            addAppointmentLog("failed", result.error || "Booksy не створив запис.", result.request_id || null);
         }
 
 

@@ -322,12 +322,53 @@ main {
 .booking-service {
   grid-column: 1 / -1;
   margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
   font-size: 11px;
   line-height: 14px;
   color: #516057;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.booking-service > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.booking-source {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgb(31 41 55 / 10%);
+  color: #475467;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 13px;
+}
+
+.booking--admin {
+  border-left-color: #2563eb;
+  background: #eff6ff;
+}
+
+.booking--admin .booking-source {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.booking--booksy-client {
+  border-left-color: #9333ea;
+  background: #faf5ff;
+}
+
+.booking--booksy-client .booking-source {
+  background: #f3e8ff;
+  color: #7e22ce;
 }
 
 .empty-day {

@@ -50,6 +50,18 @@ async function reportRefreshLog(requestId, stage, message) {
     }
 }
 
+async function reportCreateLog(requestId, stage, message) {
+    try {
+        await fetch(BACKEND_URL + "/api/booksy/create-appointment/log", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ request_id: requestId, stage, message })
+        });
+    } catch (error) {
+        console.warn("[BOOKSY] Cannot send create log:", error);
+    }
+}
+
 // ============================================================
 // MESSAGE DISPATCHER / LISTENERS
 // ============================================================
@@ -398,50 +410,55 @@ async function checkCreateAppointmentRequest() {
             return;
         }
 
+        await reportCreateLog(request.id, "extension_received", "Розширення отримало команду створення запису.");
+
         console.log("[BOOKSY] Create appointment request:", request);
 
-        const tabs = await chrome.tabs.query({
-            url: ["https://booksy.com/*", "https://*.booksy.com/*"]
-        });
-
-        if (!tabs.length) {
-            console.warn("[BOOKSY] No Booksy tabs available for create.");
-            return;
+        let tab = null;
+        const rememberedTabId = await getRememberedCalendarTabId();
+        if (rememberedTabId) {
+            try {
+                const rememberedTab = await chrome.tabs.get(rememberedTabId);
+                if (isBooksyTab(rememberedTab)) tab = rememberedTab;
+            } catch (error) {
+                lastCalendarTabId = null;
+                await chrome.storage.session.remove("booksyCalendarTabId");
+            }
         }
 
-        const sortedTabs = [...tabs].sort((a, b) => {
-            if (a.active && !b.active) return -1;
-            if (!a.active && b.active) return 1;
-            return 0;
-        });
+        if (!tab) {
+            const tabs = await chrome.tabs.query({
+                url: ["https://booksy.com/*", "https://*.booksy.com/*"]
+            });
+            tab = tabs.find(item => item.active) || tabs[0] || null;
+        }
 
         let sent = false;
-
-        for (const tab of sortedTabs) {
-            if (!tab.id) continue;
-
-            const delivered = await sendMessageToBooksyTab(tab.id, {
+        if (tab?.id) {
+            await reportCreateLog(request.id, "calendar_tab_found", `Вибрано вкладку Booksy (tab ${tab.id}) для створення запису.`);
+            sent = await sendMessageToBooksyTab(tab.id, {
                 type: "BOOKSY_CREATE_APPOINTMENT",
                 request: request
             });
-
-            if (delivered) {
-                console.log(
-                    "[BOOKSY] Create appointment command sent:",
-                    tab.id
-                );
-                sent = true;
-                break;
-            }
+        } else {
+            await reportCreateLog(request.id, "no_tab", "Не знайдено відкриту вкладку Booksy для створення запису.");
         }
 
         if (sent) {
             lastCreateAppointmentRequestId = request.id;
+            await fetch(BACKEND_URL + "/api/booksy/create-appointment/ack", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ request_id: request.id })
+            });
+            await reportCreateLog(request.id, "command_sent", "Команду передано в inject.js; Booksy виконує створення.");
         } else {
             console.warn("[BOOKSY] No Booksy tab accepted create command.");
+            await reportCreateLog(request.id, "delivery_failed", "Не вдалося передати команду у вкладку Booksy.");
         }
     } catch (error) {
         console.error("[BOOKSY] Create appointment polling error:", error);
+        await reportCreateLog(null, "extension_error", `Помилка створення: ${error.message || String(error)}`);
     }
 }
 
