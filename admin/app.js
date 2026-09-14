@@ -31,6 +31,35 @@ const statusDotElement =
 const statusTextElement =
     document.getElementById("statusText");
 
+const refreshLogEntriesElement = document.getElementById("refreshLogEntries");
+const refreshLogStatusElement = document.getElementById("refreshLogStatus");
+
+function renderRefreshLog(entries, pending) {
+    refreshLogStatusElement.textContent = pending
+        ? `Поточний стан: ${pending.status || "очікування"} (запит #${pending.id})`
+        : "Немає активного оновлення.";
+    refreshLogEntriesElement.innerHTML = "";
+    entries.slice(0, 12).forEach(entry => {
+        const item = document.createElement("li");
+        item.className = entry.stage || "";
+        const time = new Date(entry.at).toLocaleTimeString("uk-UA", {
+            hour: "2-digit", minute: "2-digit", second: "2-digit"
+        });
+        item.innerHTML = `<time>${time}</time>${escapeHtml(entry.message)}`;
+        refreshLogEntriesElement.appendChild(item);
+    });
+}
+
+async function loadRefreshLog() {
+    try {
+        const response = await fetch("/api/booksy/refresh/log", { cache: "no-store" });
+        const data = await response.json();
+        if (data.ok) renderRefreshLog(data.entries || [], data.pending);
+    } catch (error) {
+        console.warn("[ADMIN] Cannot load refresh log:", error);
+    }
+}
+
 
 // =========================================================
 // DATE
@@ -75,6 +104,8 @@ async function refreshBooksyCalendar() {
         }
 
         statusTextElement.textContent = "Booksy перезавантажується…";
+        document.getElementById("refreshLogPanel").open = true;
+        loadRefreshLog();
     } catch (error) {
         showError(`Не вдалося оновити Booksy: ${error.message}`);
     } finally {
@@ -1324,6 +1355,10 @@ function startRealtimeSync() {
                     "CALENDAR_UPDATED"
                 ) {
 
+                    if (message.type === "REFRESH_LOG") {
+                        loadRefreshLog();
+                    }
+
                     return;
 
                 }
@@ -1404,5 +1439,7 @@ document
 createAppointmentButton();
 
 startRealtimeSync();
+
+loadRefreshLog();
 
 loadCalendar();

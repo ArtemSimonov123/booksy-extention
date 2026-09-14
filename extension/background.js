@@ -5,8 +5,10 @@ console.log("[BOOKSY] Background started");
 // ============================================================
 
 const BACKEND_URL = "http://127.0.0.1:3000";
-const CREATE_REQUEST_INTERVAL = 1500;
-const REFRESH_REQUEST_INTERVAL = 1500;
+const BACKEND_POLL_ALARM = "booksy-backend-poll";
+// Chrome's minimum repeating alarm interval is 30 seconds. Unlike setInterval,
+// an alarm wakes a Manifest V3 service worker after Chrome suspends it.
+const BACKEND_POLL_MINUTES = 0.5;
 
 let lastCreateAppointmentRequestId = null;
 let lastRefreshRequestId = null;
@@ -34,6 +36,18 @@ async function getRememberedCalendarTabId() {
 
 function isBooksyTab(tab) {
     return Boolean(tab?.id && tab.url && /^https:\/\/(?:[^/]+\.)?booksy\.com\//.test(tab.url));
+}
+
+async function reportRefreshLog(requestId, stage, message) {
+    try {
+        await fetch(BACKEND_URL + "/api/booksy/refresh/log", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ request_id: requestId, stage, message })
+        });
+    } catch (error) {
+        console.warn("[BOOKSY] Cannot send refresh log:", error);
+    }
 }
 
 // ============================================================
@@ -296,6 +310,8 @@ async function checkRefreshCalendarRequest() {
             return;
         }
 
+        await reportRefreshLog(request.id, "extension_received", "Розширення отримало команду оновлення.");
+
         let tab = null;
         const rememberedTabId = await getRememberedCalendarTabId();
 
@@ -304,11 +320,13 @@ async function checkRefreshCalendarRequest() {
                 const rememberedTab = await chrome.tabs.get(rememberedTabId);
                 if (isBooksyTab(rememberedTab)) {
                     tab = rememberedTab;
+                    await reportRefreshLog(request.id, "calendar_tab_found", `Знайдено вкладку календаря (tab ${tab.id}).`);
                 }
             } catch (error) {
                 // The calendar tab was closed; clear the stale reference.
                 lastCalendarTabId = null;
                 await chrome.storage.session.remove("booksyCalendarTabId");
+                await reportRefreshLog(request.id, "calendar_tab_closed", "Збережену вкладку календаря закрито або вона недоступна.");
             }
         }
 
@@ -319,10 +337,14 @@ async function checkRefreshCalendarRequest() {
                 url: ["https://booksy.com/*", "https://*.booksy.com/*"]
             });
             tab = tabs.find(item => item.active) || tabs[0] || null;
+            if (tab?.id) {
+                await reportRefreshLog(request.id, "fallback_tab", `Календарну вкладку ще не визначено; використано вкладку Booksy (tab ${tab.id}).`);
+            }
         }
 
         if (!tab?.id) {
             console.warn("[BOOKSY] No Booksy tab available for refresh.");
+            await reportRefreshLog(request.id, "no_tab", "Не знайдено відкриту вкладку Booksy для перезавантаження.");
             return;
         }
 
@@ -331,6 +353,7 @@ async function checkRefreshCalendarRequest() {
         // customer booking.
         await chrome.tabs.reload(tab.id);
         console.log("[BOOKSY] Reloaded calendar source tab:", tab.id);
+        await reportRefreshLog(request.id, "chrome_reload", `Chrome почав перезавантаження вкладки (tab ${tab.id}).`);
 
         lastRefreshRequestId = request.id;
         await fetch(BACKEND_URL + "/api/booksy/refresh/ack", {
@@ -340,6 +363,7 @@ async function checkRefreshCalendarRequest() {
         });
     } catch (error) {
         console.error("[BOOKSY] Refresh polling error:", error);
+        await reportRefreshLog(null, "extension_error", `Помилка оновлення: ${error.message || String(error)}`);
     }
 }
 
@@ -422,11 +446,28 @@ async function checkCreateAppointmentRequest() {
 }
 
 // ============================================================
-// POLLING TIMERS & INIT
+// MANIFEST V3 BACKGROUND WAKE-UP
 // ============================================================
 
-setInterval(checkCreateAppointmentRequest, CREATE_REQUEST_INTERVAL);
-setInterval(checkRefreshCalendarRequest, REFRESH_REQUEST_INTERVAL);
+async function processBackendCommands() {
+    await checkRefreshCalendarRequest();
+    await checkCreateAppointmentRequest();
+}
 
-checkCreateAppointmentRequest();
-checkRefreshCalendarRequest();
+function scheduleBackendPolling() {
+    chrome.alarms.create(BACKEND_POLL_ALARM, {
+        periodInMinutes: BACKEND_POLL_MINUTES
+    });
+}
+
+chrome.alarms.onAlarm.addListener(function (alarm) {
+    if (alarm.name === BACKEND_POLL_ALARM) {
+        processBackendCommands();
+    }
+});
+
+chrome.runtime.onInstalled.addListener(scheduleBackendPolling);
+chrome.runtime.onStartup.addListener(scheduleBackendPolling);
+
+scheduleBackendPolling();
+processBackendCommands();

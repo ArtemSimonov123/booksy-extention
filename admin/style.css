@@ -156,6 +156,38 @@ main {
   display: none !important;
 }
 
+.refresh-log {
+  margin: 0 0 14px;
+  overflow: hidden;
+  border: 1px solid #e2e5e9;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.refresh-log summary {
+  padding: 11px 14px;
+  cursor: pointer;
+  color: #475467;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.refresh-log-status,
+.refresh-log-entries {
+  margin: 0;
+  padding: 8px 14px 12px;
+  border-top: 1px solid #edf0f2;
+  color: #667085;
+  font-size: 12px;
+}
+
+.refresh-log-entries { padding-left: 32px; }
+.refresh-log-entries li { margin: 5px 0; }
+.refresh-log-entries time { color: #98a2b3; margin-right: 6px; }
+.refresh-log-entries .timeout,
+.refresh-log-entries .no_tab,
+.refresh-log-entries .extension_error { color: #b42318; }
+
 .calendar {
   width: 100%;
   overflow: hidden;

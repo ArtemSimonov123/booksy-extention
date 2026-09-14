@@ -63,6 +63,7 @@ let latestCalendar = null;
 
 let pendingBooksyRefresh = null;
 let refreshRequestCounter = 0;
+const refreshLogs = [];
 
 // =====================================================
 // BOOKSY CATALOG STORAGE
@@ -91,6 +92,33 @@ let requestedBooksyDate = null;
 // =====================================================
 
 const realtimeClients = new Set();
+
+function broadcastRefreshLog(entry) {
+    const message = JSON.stringify({ type: "REFRESH_LOG", entry });
+    for (const client of realtimeClients) {
+        try {
+            client.write(`data: ${message}\n\n`);
+        } catch (error) {
+            realtimeClients.delete(client);
+        }
+    }
+}
+
+function addRefreshLog(stage, message, requestId = null) {
+    const entry = {
+        id: Date.now() + Math.random(),
+        at: new Date().toISOString(),
+        request_id: requestId,
+        stage,
+        message
+    };
+
+    refreshLogs.unshift(entry);
+    refreshLogs.splice(50);
+    console.log(`[REFRESH ${stage}] ${message}`);
+    broadcastRefreshLog(entry);
+    return entry;
+}
 
 
 // =====================================================
@@ -300,8 +328,17 @@ app.post("/api/booksy/refresh", (req, res) => {
     const id = ++refreshRequestCounter;
     pendingBooksyRefresh = {
         id,
-        requested_at: new Date().toISOString()
+        requested_at: new Date().toISOString(),
+        status: "queued"
     };
+    addRefreshLog("queued", "Команду оновлення створено в адмінці.", id);
+
+    setTimeout(() => {
+        if (pendingBooksyRefresh?.id === id) {
+            addRefreshLog("timeout", "Календар не надійшов протягом 45 секунд після команди.", id);
+            pendingBooksyRefresh = null;
+        }
+    }, 45000);
 
     res.json({ ok: true, requested: true, request_id: id });
 });
@@ -317,9 +354,21 @@ app.get("/api/booksy/refresh", (req, res) => {
 
 app.post("/api/booksy/refresh/ack", (req, res) => {
     if (pendingBooksyRefresh && Number(req.body?.request_id) === pendingBooksyRefresh.id) {
-        pendingBooksyRefresh = null;
+        pendingBooksyRefresh.status = "reload_sent";
+        addRefreshLog("reload_sent", "Розширення передало Chrome команду перезавантаження вкладки календаря.", pendingBooksyRefresh.id);
     }
     res.json({ ok: true });
+});
+
+app.post("/api/booksy/refresh/log", (req, res) => {
+    const { request_id: requestId, stage, message } = req.body || {};
+    addRefreshLog(stage || "extension", message || "Подія від розширення.", requestId || null);
+    res.json({ ok: true });
+});
+
+app.get("/api/booksy/refresh/log", (req, res) => {
+    res.set("Cache-Control", "no-store");
+    res.json({ ok: true, pending: pendingBooksyRefresh, entries: refreshLogs });
 });
 
 // =====================================================
@@ -528,6 +577,15 @@ app.post(
             "[BACKEND] Bookings:",
             bookingsCount
         );
+
+        if (pendingBooksyRefresh) {
+            addRefreshLog(
+                "calendar_received",
+                "Booksy повторно завантажив календар; нові дані отримано бекендом.",
+                pendingBooksyRefresh.id
+            );
+            pendingBooksyRefresh = null;
+        }
 
 
         broadcastCalendarUpdate(
