@@ -261,18 +261,20 @@ if (!globalThis.__BOOKSY_CONTENT_LOADED__) {
             const calendar = event.data.calendar;
             const url = event.data.url || "";
             const date = event.data.date || "";
+            const startDate = event.data.start_date || event.data.week_start || date;
+            const endDate = event.data.end_date || event.data.week_end || startDate;
 
             const receiveSequence = ++calendarReceiveSequence;
 
             console.log("[BOOKSY] Calendar received from page");
             console.log("[BOOKSY] Calendar URL:", url);
-            console.log("[BOOKSY] Calendar date:", date);
+            console.log("[BOOKSY] Calendar range:", startDate, "→", endDate);
             console.log(
                 "[BOOKSY] Calendar receive sequence:",
                 receiveSequence
             );
 
-            if (!date) {
+            if (!startDate || !endDate) {
                 console.warn(
                     "[BOOKSY] Calendar response without date — ignoring"
                 );
@@ -287,7 +289,7 @@ if (!globalThis.__BOOKSY_CONTENT_LOADED__) {
              * an older calendar response after the user has
              * already switched to another date.
              */
-            latestCalendarDate = date;
+            latestCalendarDate = startDate;
 
             if (calendar && calendar.bookings) {
                 console.log(
@@ -303,7 +305,9 @@ if (!globalThis.__BOOKSY_CONTENT_LOADED__) {
                 type: "BOOKSY_CALENDAR",
                 calendar: calendar,
                 url: url,
-                date: date,
+                date: startDate,
+                start_date: startDate,
+                end_date: endDate,
                 sequence: receiveSequence
             });
 

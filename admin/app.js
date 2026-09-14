@@ -127,16 +127,11 @@ async function requestBooksyDate(date) {
 async function changeDay(amount) {
 
     selectedDate.setDate(
-        selectedDate.getDate() + amount
+        selectedDate.getDate() + amount * 7
     );
-
-    const date =
-        formatDate(selectedDate);
 
     currentDateElement.textContent =
         formatHumanDate(selectedDate);
-
-    await requestBooksyDate(date);
 
     await loadCalendar();
 }
@@ -602,11 +597,6 @@ async function submitCreateAppointment() {
             );
 
 
-        await requestBooksyDate(
-            date
-        );
-
-
         await loadCalendar();
 
 
@@ -718,9 +708,7 @@ async function loadCalendar() {
 
         if (data.calendar) {
 
-            renderCalendar(
-                data.calendar
-            );
+            renderWeekCalendar(data.calendar);
 
             setOnline();
 
@@ -766,6 +754,73 @@ async function loadCalendar() {
 
     }
 
+}
+
+function formatWeekDay(dateString) {
+    const date = new Date(`${dateString}T12:00:00`);
+    return new Intl.DateTimeFormat("uk-UA", {
+        weekday: "short",
+        day: "numeric",
+        month: "short"
+    }).format(date);
+}
+
+function getWeekDates(calendar) {
+    const dates = [];
+    const current = new Date(`${calendar.start_date}T12:00:00`);
+    const end = new Date(`${calendar.end_date}T12:00:00`);
+
+    while (current <= end && dates.length < 7) {
+        dates.push(formatDate(current));
+        current.setDate(current.getDate() + 1);
+    }
+
+    return dates;
+}
+
+function getBookingPrice(booking) {
+    const value = booking.price || booking.payable?.price || booking.payable?.amount;
+    if (value === undefined || value === null || value === "") return "";
+    return `${value}${booking.currency ? ` ${booking.currency}` : " zł"}`;
+}
+
+function renderWeekCalendar(calendar) {
+    const dates = getWeekDates(calendar);
+    const bookings = calendar.bookings || {};
+    const resources = (calendar.resources || []).filter(resource => resource.visible_on_calendar !== false);
+
+    currentDateElement.textContent = `${formatWeekDay(dates[0])} — ${formatWeekDay(dates[dates.length - 1])}`;
+    calendarElement.innerHTML = `
+        <div class="week-calendar" style="--day-count:${dates.length}">
+            <div class="week-corner">Барбери</div>
+            <div class="week-days">${dates.map(date => `<div class="week-day-head ${date === formatDate(new Date()) ? "is-today" : ""}"><strong>${formatWeekDay(date)}</strong><span>${Object.values(bookings).filter(booking => booking.booked_from?.slice(0, 10) === date).length} записів</span></div>`).join("")}</div>
+            <div class="week-staff">
+                ${resources.map(resource => `<div class="week-staffer"><div class="staff-avatar">${resource.name.split(" ").map(word => word[0]).slice(0, 2).join("")}</div><div><strong>${resource.name}</strong><span>${resource.type === "staffer" ? "Барбер" : resource.type || "Працівник"}</span></div></div>`).join("")}
+            </div>
+            <div class="week-grid">
+                ${resources.flatMap(resource => dates.map(date => {
+                    const bookingIds = resource.bookings?.[date] || [];
+                    return `<div class="week-cell">${bookingIds.map(id => {
+                        const booking = bookings[id];
+                        if (!booking) return "";
+                        const color = booking.service?.color || "#8f67b5";
+                        const price = getBookingPrice(booking);
+                        return `<article class="week-booking" style="--booking-color:${color}"><div class="booking-title"><span>${formatTime(booking.booked_from)}–${formatTime(booking.booked_till)}</span><span>${booking.paid ? "Оплачено" : "Не оплачено"}</span></div><strong>${booking.service?.name || "Послуга"}</strong><span class="booking-client">${booking.customer?.name || "Клієнт"}</span>${price ? `<span class="booking-price">${price}</span>` : ""}</article>`;
+                    }).join("")}</div>`;
+                })).join("")}
+            </div>
+        </div>`;
+    calendarElement.classList.remove("hidden");
+}
+
+// Booksy returns the complete visible week. The day selector only filters the
+// already received range; it never sends a navigation command back to Booksy.
+function getCalendarForDate(calendar, date) {
+    return {
+        ...calendar,
+        start_date: date,
+        end_date: date
+    };
 }
 
 
@@ -1198,10 +1253,6 @@ function startRealtimeSync() {
                 }
 
 
-                const updatedDate =
-                    message.date;
-
-
                 const currentDate =
                     formatDate(
                         selectedDate
@@ -1209,8 +1260,8 @@ function startRealtimeSync() {
 
 
                 if (
-                    updatedDate ===
-                    currentDate
+                    message.week_start <= currentDate &&
+                    currentDate <= message.week_end
                 ) {
 
                     loadCalendar();

@@ -94,12 +94,13 @@ const realtimeClients = new Set();
 // BROADCAST UPDATE
 // =====================================================
 
-function broadcastCalendarUpdate(date) {
+function broadcastCalendarUpdate(calendarRange) {
 
     const message = JSON.stringify({
         type: "CALENDAR_UPDATED",
 
-        date: date || null,
+        week_start: calendarRange?.start_date || null,
+        week_end: calendarRange?.end_date || null,
 
         received_at:
             latestCalendar?.received_at ||
@@ -247,66 +248,26 @@ app.get(
         );
 
 
-        // -------------------------------------------------
-        // NOTHING RECEIVED YET
-        // -------------------------------------------------
-
         if (!latestCalendar) {
-
-            if (requestedDate) {
-
-                requestedBooksyDate =
-                    requestedDate;
-
-            }
-
-
             return res.json({
-
                 ok: true,
-
-                calendar: null,
-
-                requested:
-                    Boolean(requestedDate)
-
+                ok: true,
+                calendar: null
             });
-
         }
 
+        const startDate = latestCalendar.start_date;
+        const endDate = latestCalendar.end_date;
+        const requestedDateIsInWeek = !requestedDate ||
+            (startDate && endDate && requestedDate >= startDate && requestedDate <= endDate);
 
-        // -------------------------------------------------
-        // WE HAVE CALENDAR, BUT FOR ANOTHER DATE
-        // -------------------------------------------------
-
-        if (
-            requestedDate &&
-            latestCalendar.date !== requestedDate
-        ) {
-
-            requestedBooksyDate =
-                requestedDate;
-
-
+        if (!requestedDateIsInWeek) {
             return res.json({
-
                 ok: true,
-
                 calendar: null,
-
-                requested: true,
-
-                requested_date:
-                    requestedDate
-
+                available_range: { start_date: startDate, end_date: endDate }
             });
-
         }
-
-
-        // -------------------------------------------------
-        // RETURN CALENDAR
-        // -------------------------------------------------
 
         res.json({
 
@@ -315,8 +276,9 @@ app.get(
             calendar:
                 latestCalendar.calendar,
 
-            date:
-                latestCalendar.date,
+            start_date: startDate,
+
+            end_date: endDate,
 
             received_at:
                 latestCalendar.received_at
@@ -456,15 +418,18 @@ app.post(
             req.body.url || "";
 
 
-        let date =
-            req.body.date || null;
+        let startDate =
+            req.body.start_date || req.body.date || null;
+
+        let endDate =
+            req.body.end_date || startDate;
 
 
         // -------------------------------------------------
         // TRY TO GET DATE FROM BOOKSY URL
         // -------------------------------------------------
 
-        if (!date && sourceUrl) {
+        if ((!startDate || !endDate) && sourceUrl) {
 
             try {
 
@@ -472,14 +437,8 @@ app.post(
                     new URL(sourceUrl);
 
 
-                date =
-                    parsed.searchParams.get(
-                        "st_nd_date"
-                    ) ||
-                    parsed.searchParams.get(
-                        "start_date"
-                    ) ||
-                    null;
+                startDate = startDate || parsed.searchParams.get("start_date") || parsed.searchParams.get("st_nd_date") || null;
+                endDate = endDate || parsed.searchParams.get("end_date") || startDate;
 
             } catch (error) {
 
@@ -503,7 +462,9 @@ app.post(
                 req.body.source ||
                 "booksy-extension",
 
-            date: date,
+            start_date: startDate,
+
+            end_date: endDate,
 
             url: sourceUrl,
 
@@ -523,8 +484,10 @@ app.post(
 
 
         console.log(
-            "[BACKEND] Calendar date:",
-            date
+            "[BACKEND] Calendar range:",
+            startDate,
+            "→",
+            endDate
         );
 
 
@@ -534,22 +497,8 @@ app.post(
         );
 
 
-        // -------------------------------------------------
-        // REQUEST COMPLETED
-        // -------------------------------------------------
-
-        if (
-            date &&
-            requestedBooksyDate === date
-        ) {
-
-            requestedBooksyDate = null;
-
-        }
-
-
         broadcastCalendarUpdate(
-            date
+            latestCalendar
         );
 
 
@@ -557,7 +506,9 @@ app.post(
 
             ok: true,
 
-            date: date,
+            start_date: startDate,
+
+            end_date: endDate,
 
             bookings_count:
                 bookingsCount

@@ -268,6 +268,75 @@ main {
   color: #7b8490;
 }
 
+/* Booksy-like week view: rows are staff, columns are calendar days. */
+.week-calendar {
+  display: grid;
+  grid-template-columns: 164px minmax(860px, 1fr);
+  grid-template-rows: 68px auto;
+  min-width: 1024px;
+  background: #fff;
+}
+
+.week-corner {
+  display: flex;
+  align-items: center;
+  padding: 0 18px;
+  color: #667085;
+  font-size: 12px;
+  font-weight: 700;
+  border-right: 1px solid #e9eaec;
+  border-bottom: 1px solid #e9eaec;
+}
+
+.week-days,
+.week-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--day-count), minmax(128px, 1fr));
+}
+
+.week-day-head {
+  display: flex;
+  min-height: 68px;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 5px;
+  border-right: 1px solid #f0f1f2;
+  border-bottom: 1px solid #e9eaec;
+  color: #344054;
+  text-transform: capitalize;
+}
+
+.week-day-head strong { font-size: 13px; }
+.week-day-head span { color: #98a2b3; font-size: 11px; }
+.week-day-head.is-today strong { color: #e34d75; }
+
+.week-staffer {
+  min-height: 172px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px;
+  border-right: 1px solid #e9eaec;
+  border-bottom: 1px solid #e9eaec;
+}
+
+.week-staffer strong,
+.week-staffer span { display: block; }
+.week-staffer strong { font-size: 13px; color: #344054; }
+.week-staffer span { margin-top: 4px; color: #98a2b3; font-size: 12px; }
+.staff-avatar { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; background: #eef0f2; color: #667085; font-size: 11px; font-weight: 700; }
+
+.week-grid { grid-auto-rows: 172px; }
+.week-cell { padding: 8px; overflow: auto; border-right: 1px solid #f0f1f2; border-bottom: 1px solid #e9eaec; background-image: linear-gradient(#fafafa 1px, transparent 1px); background-size: 100% 42px; }
+.week-booking { margin-bottom: 7px; padding: 8px 9px; overflow: hidden; border-left: 4px solid var(--booking-color); border-radius: 7px; background: color-mix(in srgb, var(--booking-color) 14%, white); color: #344054; box-shadow: 0 1px 2px rgb(16 24 40 / 7%); }
+.booking-title { display: flex; justify-content: space-between; gap: 5px; color: #667085; font-size: 10px; }
+.booking-title span:first-child { color: #344054; font-weight: 700; }
+.week-booking > strong { display: block; margin-top: 5px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.booking-client, .booking-price { display: block; margin-top: 3px; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.booking-client { color: #667085; }
+.booking-price { color: #027a48; font-weight: 700; }
+
 @media (max-width: 800px) {
   .topbar {
       grid-template-columns: 1fr;

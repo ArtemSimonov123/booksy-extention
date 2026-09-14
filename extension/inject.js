@@ -26,15 +26,24 @@ if (window.__BOOKSY_INJECT_LOADED__) {
     let syncTimer = null;
     let syncInProgress = false;
 
-    // Окремий стан для кожної дати.
-    // Не можна використовувати один signature для всіх дат,
-    // бо при 1 -> 2 -> 1 -> 2 старі дані повинні залишатися доступними.
+    // ============================================================
+    // WEEK CALENDAR STATE
+    // ============================================================
+
+    let lastCalendarWeekStart = null;
+    let lastCalendarWeekEnd = null;
+    let lastCalendarWeekData = null;
+    let lastCalendarWeekUrl = null;
+    let lastCalendarWeekReceivedAt = null;
+
+    // ============================================================
+    // LEGACY DATE STATE
+    // ============================================================
+    // Поки що залишаємо для сумісності
+    // зі старим content/background.
+    // На наступному етапі приберемо.
     const calendarCache = new Map();
-
-    // Остання дата, яку ми явно попросили Booksy відкрити.
     let requestedCalendarDate = null;
-
-    // Захист від одночасних команд переключення дат.
     let dateSwitchInProgress = false;
 
     // ============================================================
@@ -221,6 +230,47 @@ if (window.__BOOKSY_INJECT_LOADED__) {
         }
     }
 
+    function getCalendarRangeFromUrl(url) {
+        if (!url) {
+            return null;
+        }
+
+        try {
+            const parsed = new URL(
+                url,
+                window.location.href
+            );
+
+            const startDate =
+                parsed.searchParams.get("start_date") ||
+                parsed.searchParams.get("st_nd_date") ||
+                parsed.searchParams.get("date") ||
+                null;
+
+            const endDate =
+                parsed.searchParams.get("end_date") ||
+                startDate;
+
+            if (!startDate) {
+                return null;
+            }
+
+            return {
+                startDate,
+                endDate
+            };
+
+        } catch (error) {
+
+            console.warn(
+                "[BOOKSY WEEK] Cannot parse calendar range:",
+                error
+            );
+
+            return null;
+        }
+    }
+
     function createSignature(data, url) {
         try {
             return JSON.stringify(data);
@@ -230,7 +280,7 @@ if (window.__BOOKSY_INJECT_LOADED__) {
     }
 
     // ============================================================
-    // SEND CALENDAR & CACHE
+    // SEND CALENDAR & WEEK CACHE
     // ============================================================
 
     function sendCalendar(data, url) {
@@ -238,75 +288,141 @@ if (window.__BOOKSY_INJECT_LOADED__) {
             return;
         }
 
-        const date = getDateFromUrl(url);
+        const range =
+            getCalendarRangeFromUrl(url);
 
-        if (!date) {
+        if (!range) {
             console.warn(
-                "[BOOKSY] Calendar response without date:",
+                "[BOOKSY WEEK] Calendar response without valid range:",
                 url
             );
+
             return;
         }
 
-        const signature = createSignature(data, url);
+        const signature =
+            createSignature(data, url);
 
-        console.log("[BOOKSY] Calendar received from Booksy");
-        console.log("[BOOKSY] URL:", url);
-        console.log("[BOOKSY] Date:", date);
+        console.log(
+            "[BOOKSY WEEK] Calendar received from Booksy"
+        );
 
-        const cached = calendarCache.get(date);
+        console.log(
+            "[BOOKSY WEEK] URL:",
+            url
+        );
 
-        if (cached && cached.signature === signature) {
+        console.log(
+            "[BOOKSY WEEK] Range:",
+            range.startDate,
+            "→",
+            range.endDate
+        );
+
+        // --------------------------------------------------------
+        // Перевіряємо, чи це той самий тиждень і ті самі дані
+        // --------------------------------------------------------
+
+        if (
+            lastCalendarWeekStart === range.startDate &&
+            lastCalendarWeekEnd === range.endDate &&
+            lastCalendarSignature === signature
+        ) {
             console.log(
-                "[BOOKSY] Calendar unchanged for date:",
-                date
+                "[BOOKSY WEEK] Calendar unchanged:",
+                range.startDate,
+                "→",
+                range.endDate
             );
 
-            if (requestedCalendarDate === date) {
-                window.postMessage(
-                    {
-                        source: "BOOKSY_EXTENSION",
-                        type: "BOOKSY_CALENDAR",
-                        calendar: cached.data,
-                        url: cached.url || url,
-                        date: date,
-                        cached: true
-                    },
-                    "*"
-                );
-            }
-
             return;
         }
 
-        calendarCache.set(date, {
-            signature: signature,
-            data: data,
-            url: url,
-            receivedAt: Date.now()
-        });
+        // --------------------------------------------------------
+        // Зберігаємо весь тиждень
+        // --------------------------------------------------------
 
-        if (calendarCache.size > 20) {
-            const oldestDate = calendarCache.keys().next().value;
+        lastCalendarWeekStart =
+            range.startDate;
 
-            if (oldestDate) {
-                calendarCache.delete(oldestDate);
+        lastCalendarWeekEnd =
+            range.endDate;
+
+        lastCalendarWeekData =
+            data;
+
+        lastCalendarWeekUrl =
+            url;
+
+        lastCalendarWeekReceivedAt =
+            Date.now();
+
+        lastCalendarSignature =
+            signature;
+
+        lastCalendarUrl =
+            url;
+
+        // --------------------------------------------------------
+        // Для сумісності залишаємо cache
+        // --------------------------------------------------------
+
+        calendarCache.set(
+            range.startDate,
+            {
+                signature,
+                data,
+                url,
+                startDate: range.startDate,
+                endDate: range.endDate,
+                receivedAt: Date.now()
             }
-        }
+        );
 
-        lastCalendarSignature = signature;
-        lastCalendarUrl = url;
+        // --------------------------------------------------------
+        // Передаємо ВЕСЬ ТИЖДЕНЬ у content.js
+        // --------------------------------------------------------
 
         window.postMessage(
             {
-                source: "BOOKSY_EXTENSION",
-                type: "BOOKSY_CALENDAR",
-                calendar: data,
-                url: url,
-                date: date,
-                cached: false
+                source:
+                    "BOOKSY_EXTENSION",
+
+                type:
+                    "BOOKSY_CALENDAR",
+
+                calendar:
+                    data,
+
+                url:
+                    url,
+
+                date:
+                    range.startDate,
+
+                start_date:
+                    range.startDate,
+
+                end_date:
+                    range.endDate,
+
+                week_start:
+                    range.startDate,
+
+                week_end:
+                    range.endDate,
+
+                cached:
+                    false
             },
             "*"
+        );
+
+        console.log(
+            "[BOOKSY WEEK] Week synchronized:",
+            range.startDate,
+            "→",
+            range.endDate
         );
     }
 
@@ -764,99 +880,31 @@ if (window.__BOOKSY_INJECT_LOADED__) {
     }
 
     // ============================================================
-    // REFRESH / HEARTBEAT
+    // REFRESH BOOKSY PAGE
     // ============================================================
 
     async function refreshCalendar() {
-        if (syncInProgress) {
-            console.log(
-                "[BOOKSY SYNC] Heartbeat already in progress"
-            );
-            return false;
-        }
+        console.log(
+            "[BOOKSY SYNC] Refresh requested."
+        );
 
-        syncInProgress = true;
+        console.log(
+            "[BOOKSY SYNC] We do NOT make direct calendar GET."
+        );
+
+        console.log(
+            "[BOOKSY SYNC] Booksy itself must load the Week calendar."
+        );
 
         try {
-            console.log("[BOOKSY SYNC] Heartbeat started");
-
-            const base = getBooksyApiBase();
-
-            if (!base) {
-                console.warn(
-                    "[BOOKSY SYNC] Cannot determine Booksy API base"
-                );
-                return false;
-            }
-
-            const date =
-                requestedCalendarDate ||
-                getDateFromUrl(lastCalendarUrl);
-
-            if (!date) {
-                console.warn(
-                    "[BOOKSY SYNC] No active calendar date for heartbeat"
-                );
-                return false;
-            }
-
-            const url =
-                `${base}/calendar` +
-                `?start_date=${encodeURIComponent(date)}` +
-                `&end_date=${encodeURIComponent(date)}` +
-                `&include_unconfirmed=true` +
-                `&version=3` +
-                `&resources_per_page=2`;
-
-            console.log(
-                "[BOOKSY SYNC] Heartbeat calendar request:",
-                url
-            );
-
-            const response = await fetch(url, {
-                method: "GET",
-                credentials: "include",
-                cache: "no-store",
-                headers: {
-                    "Accept": "application/json, text/plain, */*"
-                }
-            });
-
-            console.log(
-                "[BOOKSY SYNC] Heartbeat response:",
-                response.status
-            );
-
-            if (!response.ok) {
-                console.warn(
-                    "[BOOKSY SYNC] Heartbeat failed:",
-                    response.status
-                );
-
-                return false;
-            }
-
-            const data = await response.json();
-
-            console.log(
-                "[BOOKSY SYNC] Heartbeat calendar received:",
-                date
-            );
-
-            sendCalendar(data, url);
-
+            window.location.reload();
             return true;
-
         } catch (error) {
             console.error(
-                "[BOOKSY SYNC] Heartbeat error:",
+                "[BOOKSY SYNC] Cannot reload Booksy:",
                 error
             );
-
             return false;
-
-        } finally {
-            syncInProgress = false;
         }
     }
 
@@ -1691,23 +1739,15 @@ if (window.__BOOKSY_INJECT_LOADED__) {
     // ============================================================
 
     function startSync() {
-        if (syncTimer) {
-            return;
-        }
+        console.log(
+            "[BOOKSY SYNC] Week synchronization mode started."
+        );
 
         console.log(
-            "[BOOKSY SYNC] Automatic sync started:",
-            SYNC_INTERVAL / 1000,
-            "seconds"
+            "[BOOKSY SYNC] Waiting for native Booksy Week calendar request."
         );
 
-        syncTimer = setInterval(
-            refreshCalendar,
-            SYNC_INTERVAL
-        );
-
-        // Даємо Booksy час завантажити сторінку,
-        // перехопити API URL та авторизацію.
+        // Каталог завантажуємо окремо після старту Booksy.
         setTimeout(function () {
             syncBooksyCatalogToBackend();
         }, 3000);
@@ -1716,7 +1756,7 @@ if (window.__BOOKSY_INJECT_LOADED__) {
     startSync();
 
     console.log(
-        "[BOOKSY] Calendar interception active"
+        "[BOOKSY] Week calendar interception active"
     );
 
     // ============================================================

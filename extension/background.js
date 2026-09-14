@@ -5,12 +5,7 @@ console.log("[BOOKSY] Background started");
 // ============================================================
 
 const BACKEND_URL = "http://127.0.0.1:3000";
-const DATE_REQUEST_INTERVAL = 1500;
 const CREATE_REQUEST_INTERVAL = 1500;
-
-let lastSentRequestedDate = null;
-let lastSentRequestedAt = 0;
-const DATE_REQUEST_DEDUP_MS = 500;
 
 let lastCreateAppointmentRequestId = null;
 
@@ -151,7 +146,9 @@ chrome.runtime.onMessage.addListener(function (
                 received_at: new Date().toISOString(),
                 calendar: message.calendar,
                 url: message.url || "",
-                date: message.date || null
+                date: message.date || null,
+                start_date: message.start_date || message.date || null,
+                end_date: message.end_date || message.start_date || message.date || null
             })
         })
             .then(async function (response) {
@@ -250,82 +247,6 @@ async function sendMessageToBooksyTab(tabId, message) {
 }
 
 // ============================================================
-// ADMIN -> BOOKSY DATE REQUEST
-// ============================================================
-
-async function checkRequestedBooksyDate() {
-    try {
-        const url = BACKEND_URL + "/api/booksy/request-date";
-        const response = await fetch(url, {
-            method: "GET",
-            cache: "no-store"
-        });
-
-        if (!response.ok) {
-            return;
-        }
-
-        const data = await response.json();
-
-        if (!data || !data.requested || !data.date) {
-            lastSentRequestedDate = null;
-            return;
-        }
-
-        const now = Date.now();
-        if (
-            lastSentRequestedDate === data.date &&
-            now - lastSentRequestedAt < DATE_REQUEST_DEDUP_MS
-        ) {
-            return;
-        }
-
-        console.log("[BOOKSY] Date request from Admin:", data.date);
-
-        const tabs = await chrome.tabs.query({
-            url: ["https://booksy.com/*", "https://*.booksy.com/*"]
-        });
-
-        if (!tabs.length) {
-            console.warn("[BOOKSY] No Booksy tabs available for date request.");
-            return;
-        }
-
-        const sortedTabs = [...tabs].sort((a, b) => {
-            if (a.active && !b.active) return -1;
-            if (!a.active && b.active) return 1;
-            return 0;
-        });
-
-        let sent = false;
-
-        for (const tab of sortedTabs) {
-            if (!tab.id) continue;
-
-            const delivered = await sendMessageToBooksyTab(tab.id, {
-                type: "BOOKSY_FETCH_DATE",
-                date: data.date
-            });
-
-            if (delivered) {
-                console.log("[BOOKSY] Date request sent to tab:", tab.id);
-                sent = true;
-                break;
-            }
-        }
-
-        if (sent) {
-            lastSentRequestedDate = data.date;
-            lastSentRequestedAt = Date.now();
-        } else {
-            console.error("[BOOKSY] Could not send date request to any Booksy tab.");
-        }
-    } catch (error) {
-        console.error("[BOOKSY] Date polling error:", error);
-    }
-}
-
-// ============================================================
 // ADMIN -> BOOKSY CREATE APPOINTMENT
 // ============================================================
 
@@ -407,8 +328,6 @@ async function checkCreateAppointmentRequest() {
 // POLLING TIMERS & INIT
 // ============================================================
 
-setInterval(checkRequestedBooksyDate, DATE_REQUEST_INTERVAL);
 setInterval(checkCreateAppointmentRequest, CREATE_REQUEST_INTERVAL);
 
-checkRequestedBooksyDate();
 checkCreateAppointmentRequest();
