@@ -14,7 +14,11 @@ if (window.__BOOKSY_INJECT_LOADED__) {
     // ============================================================
 
     const CALENDAR_URL_PART = "/core/v2/business_api/me/businesses/";
-    const CALENDAR_PATH = "/calendar";
+    const MONTHLY_BOOKINGS_PATH = "/monthly_bookings";
+    // The customer works every day, 08:00–20:00. Monthly Booksy responses do
+    // not include staff working hours, so the admin calendar supplies them.
+    const STATIC_WORKDAY_FROM = "08:00";
+    const STATIC_WORKDAY_TILL = "20:00";
     const SYNC_INTERVAL = 15000;
 
     // ============================================================
@@ -27,14 +31,15 @@ if (window.__BOOKSY_INJECT_LOADED__) {
     let syncInProgress = false;
 
     // ============================================================
-    // WEEK CALENDAR STATE
+    // CALENDAR STATE
     // ============================================================
 
-    let lastCalendarWeekStart = null;
-    let lastCalendarWeekEnd = null;
-    let lastCalendarWeekData = null;
-    let lastCalendarWeekUrl = null;
-    let lastCalendarWeekReceivedAt = null;
+    let lastCalendarMonthStart = null;
+    let lastCalendarMonthEnd = null;
+    let lastCalendarData = null;
+    let lastCalendarMonthUrl = null;
+    let lastCalendarMonthReceivedAt = null;
+    let knownCalendarStaffers = [];
 
     // ============================================================
     // LEGACY DATE STATE
@@ -189,15 +194,11 @@ if (window.__BOOKSY_INJECT_LOADED__) {
     // HELPERS
     // ============================================================
 
-    function isCalendarUrl(url) {
-        if (!url) {
-            return false;
-        }
-
-        return (
+    function isMonthlyBookingsUrl(url) {
+        return Boolean(
+            url &&
             url.includes(CALENDAR_URL_PART) &&
-            url.includes(CALENDAR_PATH) &&
-            !url.includes("/calendar/")
+            url.includes(MONTHLY_BOOKINGS_PATH)
         );
     }
 
@@ -280,10 +281,111 @@ if (window.__BOOKSY_INJECT_LOADED__) {
     }
 
     // ============================================================
-    // SEND CALENDAR & WEEK CACHE
+    // MONTHLY CALENDAR NORMALIZATION
     // ============================================================
 
-    function sendCalendar(data, url) {
+    /*
+     * The monthly endpoint groups preview bookings by date. Convert it to the
+     * calendar shape already used by the backend and the per-day admin view:
+     * a booking dictionary plus each staffer's booking IDs by date.
+     */
+    function normalizeMonthlyCalendar(monthData, range) {
+        const bookings = {};
+        const resourcesById = new Map();
+        const staticWorkingHours = {};
+        const currentDate = new Date(`${range.startDate}T12:00:00`);
+        const finalDate = new Date(`${range.endDate}T12:00:00`);
+
+        while (currentDate <= finalDate) {
+            const date = currentDate.toISOString().slice(0, 10);
+            staticWorkingHours[date] = [{
+                hour_from: STATIC_WORKDAY_FROM,
+                hour_till: STATIC_WORKDAY_TILL
+            }];
+            currentDate.setDate(currentDate.getDate() + 1);
+        }
+
+        knownCalendarStaffers.forEach(function (staffer) {
+            if (!staffer?.id) {
+                return;
+            }
+
+            resourcesById.set(String(staffer.id), {
+                id: staffer.id,
+                name: staffer.name || "Працівник",
+                type: staffer.type || "S",
+                visible_on_calendar: staffer.visible !== false,
+                working_hours: staticWorkingHours,
+                bookings: {},
+                reservations: {},
+                time_offs: {}
+            });
+        });
+
+        Object.entries(monthData || {}).forEach(function ([date, day]) {
+            const dayBookings = Array.isArray(day?.bookings)
+                ? day.bookings
+                : [];
+
+            dayBookings.forEach(function (booking) {
+                if (!booking?.id) {
+                    return;
+                }
+
+                const bookingId = String(booking.id);
+                bookings[bookingId] = booking;
+
+                const bookingResources = Array.isArray(booking.resources)
+                    ? booking.resources
+                    : [];
+
+                bookingResources.forEach(function (staffer) {
+                    if (!staffer?.id) {
+                        return;
+                    }
+
+                    const stafferId = String(staffer.id);
+                    let resource = resourcesById.get(stafferId);
+
+                    if (!resource) {
+                        resource = {
+                            id: staffer.id,
+                            name: staffer.name || "Працівник",
+                            type: staffer.type || "S",
+                            visible_on_calendar: true,
+                            working_hours: staticWorkingHours,
+                            bookings: {},
+                            reservations: {},
+                            time_offs: {}
+                        };
+                        resourcesById.set(stafferId, resource);
+                    }
+
+                    if (!resource.bookings[date]) {
+                        resource.bookings[date] = [];
+                    }
+
+                    resource.bookings[date].push(bookingId);
+                });
+            });
+        });
+
+        return {
+            bookings,
+            resources: Array.from(resourcesById.values()),
+            reservations: {},
+            time_offs: {},
+            start_date: range.startDate,
+            end_date: range.endDate,
+            source_view: "month"
+        };
+    }
+
+    // ============================================================
+    // SEND MONTHLY CALENDAR
+    // ============================================================
+
+    function sendMonthlyCalendar(data, url) {
         if (!data || !url) {
             return;
         }
@@ -293,7 +395,7 @@ if (window.__BOOKSY_INJECT_LOADED__) {
 
         if (!range) {
             console.warn(
-                "[BOOKSY WEEK] Calendar response without valid range:",
+                "[BOOKSY MONTH] Calendar response without valid range:",
                 url
             );
 
@@ -304,16 +406,16 @@ if (window.__BOOKSY_INJECT_LOADED__) {
             createSignature(data, url);
 
         console.log(
-            "[BOOKSY WEEK] Calendar received from Booksy"
+            "[BOOKSY MONTH] Calendar received from Booksy"
         );
 
         console.log(
-            "[BOOKSY WEEK] URL:",
+            "[BOOKSY MONTH] URL:",
             url
         );
 
         console.log(
-            "[BOOKSY WEEK] Range:",
+            "[BOOKSY MONTH] Range:",
             range.startDate,
             "→",
             range.endDate
@@ -324,12 +426,12 @@ if (window.__BOOKSY_INJECT_LOADED__) {
         // --------------------------------------------------------
 
         if (
-            lastCalendarWeekStart === range.startDate &&
-            lastCalendarWeekEnd === range.endDate &&
+            lastCalendarMonthStart === range.startDate &&
+            lastCalendarMonthEnd === range.endDate &&
             lastCalendarSignature === signature
         ) {
             console.log(
-                "[BOOKSY WEEK] Calendar unchanged:",
+                "[BOOKSY MONTH] Calendar unchanged:",
                 range.startDate,
                 "→",
                 range.endDate
@@ -342,19 +444,20 @@ if (window.__BOOKSY_INJECT_LOADED__) {
         // Зберігаємо весь тиждень
         // --------------------------------------------------------
 
-        lastCalendarWeekStart =
+        lastCalendarMonthStart =
             range.startDate;
 
-        lastCalendarWeekEnd =
+        lastCalendarMonthEnd =
             range.endDate;
 
-        lastCalendarWeekData =
-            data;
+        const calendar = normalizeMonthlyCalendar(data, range);
 
-        lastCalendarWeekUrl =
+        lastCalendarData = calendar;
+
+        lastCalendarMonthUrl =
             url;
 
-        lastCalendarWeekReceivedAt =
+        lastCalendarMonthReceivedAt =
             Date.now();
 
         lastCalendarSignature =
@@ -371,7 +474,7 @@ if (window.__BOOKSY_INJECT_LOADED__) {
             range.startDate,
             {
                 signature,
-                data,
+                data: calendar,
                 url,
                 startDate: range.startDate,
                 endDate: range.endDate,
@@ -392,7 +495,7 @@ if (window.__BOOKSY_INJECT_LOADED__) {
                     "BOOKSY_CALENDAR",
 
                 calendar:
-                    data,
+                    calendar,
 
                 url:
                     url,
@@ -406,10 +509,10 @@ if (window.__BOOKSY_INJECT_LOADED__) {
                 end_date:
                     range.endDate,
 
-                week_start:
+                month_start:
                     range.startDate,
 
-                week_end:
+                month_end:
                     range.endDate,
 
                 cached:
@@ -419,7 +522,7 @@ if (window.__BOOKSY_INJECT_LOADED__) {
         );
 
         console.log(
-            "[BOOKSY WEEK] Week synchronized:",
+            "[BOOKSY MONTH] Month synchronized:",
             range.startDate,
             "→",
             range.endDate
@@ -476,9 +579,9 @@ if (window.__BOOKSY_INJECT_LOADED__) {
 
             captureBooksyUrl(url);
 
-            if (isCalendarUrl(url)) {
+            if (isMonthlyBookingsUrl(url)) {
                 console.log(
-                    "[BOOKSY DATE] Calendar XHR detected:",
+                    "[BOOKSY MONTH] Monthly bookings XHR detected:",
                     url
                 );
 
@@ -494,7 +597,7 @@ if (window.__BOOKSY_INJECT_LOADED__) {
         };
 
         XMLHttpRequest.prototype.send = function (body) {
-            if (this.__booksy_url && isCalendarUrl(this.__booksy_url)) {
+            if (this.__booksy_url && isMonthlyBookingsUrl(this.__booksy_url)) {
                 this.addEventListener("load", function () {
                     console.log(
                         "[BOOKSY] Calendar XHR response:",
@@ -528,7 +631,7 @@ if (window.__BOOKSY_INJECT_LOADED__) {
                         return;
                     }
 
-                    sendCalendar(data, this.__booksy_url);
+                    sendMonthlyCalendar(data, this.__booksy_url);
                 });
             }
 
@@ -572,9 +675,9 @@ if (window.__BOOKSY_INJECT_LOADED__) {
 
             const response = await originalFetch.apply(this, args);
 
-            if (isCalendarUrl(url)) {
+            if (isMonthlyBookingsUrl(url)) {
                 console.log(
-                    "[BOOKSY DATE] Calendar FETCH detected:",
+                    "[BOOKSY MONTH] Monthly bookings FETCH detected:",
                     url
                 );
 
@@ -590,7 +693,7 @@ if (window.__BOOKSY_INJECT_LOADED__) {
                         const clone = response.clone();
                         const data = await clone.json();
 
-                        sendCalendar(data, url);
+                        sendMonthlyCalendar(data, url);
                     } catch (error) {
                         console.error(
                             "[BOOKSY] Calendar FETCH parse error:",
@@ -913,6 +1016,10 @@ if (window.__BOOKSY_INJECT_LOADED__) {
     // ============================================================
 
     function getBooksyApiBase() {
+        if (booksyApiOrigin && booksyBusinessId) {
+            return `${booksyApiOrigin}/core/v2/business_api/me/businesses/${booksyBusinessId}`;
+        }
+
         const candidates = [];
 
         if (lastCalendarUrl) {
@@ -1244,6 +1351,17 @@ if (window.__BOOKSY_INJECT_LOADED__) {
             name: resource.name || "Працівник"
         }));
 
+        knownCalendarStaffers = (
+            stafferResponse.resources ||
+            stafferResponse.data ||
+            []
+        ).map(resource => ({
+            id: resource.id,
+            name: resource.name,
+            type: resource.type || "S",
+            visible: resource.visible !== false
+        }));
+
         const services = [];
         const categories =
             serviceResponse.service_categories ||
@@ -1274,7 +1392,7 @@ if (window.__BOOKSY_INJECT_LOADED__) {
         }
 
         const clientsById = new Map();
-        const calendarBookings = lastCalendarWeekData?.bookings || {};
+        const calendarBookings = lastCalendarData?.bookings || {};
 
         Object.values(calendarBookings).forEach(function (booking) {
             const client = booking?.customer;
@@ -1571,13 +1689,27 @@ if (window.__BOOKSY_INJECT_LOADED__) {
 
             console.log("[BOOKSY CREATE] Starting dry-run...");
 
-            const dryRun = await booksyRequest(
-                `${base}/appointments/dry_run/`,
-                {
-                    method: "POST",
-                    body: JSON.stringify(appointment)
+            let dryRun = null;
+
+            try {
+                dryRun = await booksyRequest(
+                    `${base}/appointments/dry_run/`,
+                    {
+                        method: "POST",
+                        body: JSON.stringify(appointment)
+                    }
+                );
+            } catch (error) {
+                // Some Booksy business APIs do not expose dry_run. A 404
+                // must not prevent the actual appointment request.
+                if (Number(error?.status) !== 404) {
+                    throw error;
                 }
-            );
+
+                console.warn(
+                    "[BOOKSY CREATE] dry_run is unavailable; creating directly."
+                );
+            }
 
             console.log(
                 "[BOOKSY CREATE] Dry-run successful:",
@@ -1766,11 +1898,11 @@ if (window.__BOOKSY_INJECT_LOADED__) {
 
     function startSync() {
         console.log(
-            "[BOOKSY SYNC] Week synchronization mode started."
+            "[BOOKSY SYNC] Monthly synchronization mode started."
         );
 
         console.log(
-            "[BOOKSY SYNC] Waiting for native Booksy Week calendar request."
+            "[BOOKSY SYNC] Waiting for native Booksy monthly bookings request."
         );
 
         // Каталог завантажуємо окремо після старту Booksy.
@@ -1782,7 +1914,7 @@ if (window.__BOOKSY_INJECT_LOADED__) {
     startSync();
 
     console.log(
-        "[BOOKSY] Week calendar interception active"
+        "[BOOKSY] Monthly calendar interception active"
     );
 
     // ============================================================

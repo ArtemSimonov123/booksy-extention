@@ -593,6 +593,10 @@ async function submitCreateAppointment() {
             "createNote"
         ).value;
 
+    const stafferOption = document.getElementById("createStafferId").selectedOptions[0];
+    const serviceOption = document.getElementById("createVariantId").selectedOptions[0];
+    const clientOption = document.getElementById("createClientId").selectedOptions[0];
+
 
     const errorElement =
         document.getElementById(
@@ -668,7 +672,18 @@ async function submitCreateAppointment() {
                             clientId || null,
 
                         business_secret_note:
-                            note
+                            note,
+
+                        staffer_name:
+                            stafferOption?.textContent?.trim() || "Працівник",
+
+                        service_name:
+                            serviceOption?.textContent?.trim() || "Послуга",
+
+                        client_name:
+                            clientId
+                                ? (clientOption?.textContent?.trim() || "Клієнт")
+                                : "Без імені"
 
                     })
                 }
@@ -832,7 +847,7 @@ async function loadCalendar() {
 
         if (data.calendar) {
 
-            // The backend keeps a seven-day Booksy response, while the admin
+            // The backend keeps the Booksy month range, while the admin
             // renders exactly one selected day from that local range.
             renderCalendar(getCalendarForDate(data.calendar, date));
 
@@ -939,7 +954,7 @@ function renderWeekCalendar(calendar) {
     calendarElement.classList.remove("hidden");
 }
 
-// Booksy returns the complete visible week. The day selector only filters the
+// The month response is held locally. The day selector only filters the
 // already received range; it never sends a navigation command back to Booksy.
 function getCalendarForDate(calendar, date) {
     return {

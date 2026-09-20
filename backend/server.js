@@ -318,10 +318,10 @@ app.get(
 
         const startDate = latestCalendar.start_date;
         const endDate = latestCalendar.end_date;
-        const requestedDateIsInWeek = !requestedDate ||
+        const requestedDateIsInRange = !requestedDate ||
             (startDate && endDate && requestedDate >= startDate && requestedDate <= endDate);
 
-        if (!requestedDateIsInWeek) {
+        if (!requestedDateIsInRange) {
             return res.json({
                 ok: true,
                 calendar: null,
