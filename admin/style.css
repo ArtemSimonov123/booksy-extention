@@ -340,8 +340,13 @@ main {
   text-overflow: ellipsis;
 }
 
-.booking-source {
+.booking-tags {
   flex: 0 0 auto;
+  display: inline-flex;
+  gap: 4px;
+}
+
+.booking-tag {
   padding: 1px 5px;
   border-radius: 4px;
   background: rgb(31 41 55 / 10%);
@@ -359,6 +364,20 @@ main {
 .booking--admin .booking-source {
   background: #dbeafe;
   color: #1d4ed8;
+}
+
+.booking--creating {
+  opacity: 0.82;
+}
+
+.booking--creating .booking-creation-status {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.booking--created .booking-creation-status {
+  background: #d1fae5;
+  color: #047857;
 }
 
 .booking--booksy-client {

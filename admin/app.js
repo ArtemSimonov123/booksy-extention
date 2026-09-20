@@ -1192,6 +1192,7 @@ function renderBooking(
 ) {
 
     const source = getBookingSource(booking);
+    const creationStatus = getBookingCreationStatus(booking);
 
     const from =
         formatTime(
@@ -1226,8 +1227,10 @@ function renderBooking(
             "div"
         );
 
-    bookingElement.className =
-        `booking booking--${source.key}`;
+    bookingElement.className = `booking booking--${source.key}`;
+    if (creationStatus) {
+        bookingElement.classList.add(`booking--${creationStatus.key}`);
+    }
 
 
     bookingElement.style.top =
@@ -1273,12 +1276,23 @@ function renderBooking(
     const serviceName = document.createElement("span");
     serviceName.textContent = booking.service?.name || "Послуга";
 
+    const labels = document.createElement("span");
+    labels.className = "booking-tags";
+
     const sourceLabel = document.createElement("span");
-    sourceLabel.className = "booking-source";
+    sourceLabel.className = "booking-tag booking-source";
     sourceLabel.textContent = source.label;
+    labels.appendChild(sourceLabel);
+
+    if (creationStatus) {
+        const creationLabel = document.createElement("span");
+        creationLabel.className = "booking-tag booking-creation-status";
+        creationLabel.textContent = creationStatus.label;
+        labels.appendChild(creationLabel);
+    }
 
     service.appendChild(serviceName);
-    service.appendChild(sourceLabel);
+    service.appendChild(labels);
 
 
     bookingElement.appendChild(
@@ -1318,6 +1332,18 @@ function getBookingSource(booking) {
         return { key: "admin", label: "Адмінка" };
     }
 
+    if (booking._source === "creating") {
+        return { key: "creating", label: "Створюється" };
+    }
+
+    if (booking._source === "created") {
+        return { key: "created", label: "Створено" };
+    }
+
+    if (booking._created_in_admin) {
+        return { key: "created", label: "Створено" };
+    }
+
     // Booksy calendar responses mark customer-made appointments with type C.
     if (booking.type === "C") {
         return { key: "booksy-client", label: "Booksy клієнт" };
@@ -1326,6 +1352,18 @@ function getBookingSource(booking) {
     return { key: "booksy", label: "Booksy" };
 }
 
+
+function getBookingCreationStatus(booking) {
+    if (booking._creation_status === "creating") {
+        return { key: "creating", label: "Створюється" };
+    }
+
+    if (booking._creation_status === "created" || booking._created_in_admin) {
+        return { key: "created", label: "Створено" };
+    }
+
+    return null;
+}
 
 // =========================================================
 // EMPTY

@@ -63,6 +63,9 @@ let latestCalendar = null;
 // IDs of subbookings created through this admin. Booksy uses the same type B
 // for all business-side bookings, so type alone cannot identify our admin.
 const adminCreatedBookingIds = new Set();
+// Local cards are shown immediately after an admin submits creation. They are
+// replaced by the real Booksy booking as soon as it arrives in calendar sync.
+const pendingAdminBookings = new Map();
 
 let pendingBooksyRefresh = null;
 let refreshRequestCounter = 0;
@@ -331,17 +334,51 @@ app.get(
 
         const calendar = latestCalendar.calendar;
         const bookings = calendar.bookings || {};
+        const displayedResources = (calendar.resources || []).map(resource => ({
+            ...resource,
+            bookings: { ...(resource.bookings || {}) }
+        }));
+        const resourcesById = new Map(
+            displayedResources.map(resource => [String(resource.id), resource])
+        );
+        const displayedBookings = Object.fromEntries(
+            Object.entries(bookings).map(([id, booking]) => [
+                id,
+                {
+                    ...booking,
+                    _created_in_admin: adminCreatedBookingIds.has(String(id))
+                }
+            ])
+        );
+
+        for (const pending of pendingAdminBookings.values()) {
+            const bookingId = pending.id;
+            displayedBookings[bookingId] = pending.booking;
+
+            let resource = resourcesById.get(String(pending.staffer_id));
+            if (!resource) {
+                resource = {
+                    id: pending.staffer_id,
+                    name: pending.staffer_name,
+                    type: "S",
+                    visible_on_calendar: true,
+                    working_hours: {},
+                    bookings: {}
+                };
+                displayedResources.push(resource);
+                resourcesById.set(String(resource.id), resource);
+            }
+
+            if (!resource.bookings[pending.date]) {
+                resource.bookings[pending.date] = [];
+            }
+            resource.bookings[pending.date].push(bookingId);
+        }
+
         const markedCalendar = {
             ...calendar,
-            bookings: Object.fromEntries(
-                Object.entries(bookings).map(([id, booking]) => [
-                    id,
-                    {
-                        ...booking,
-                        _created_in_admin: adminCreatedBookingIds.has(String(id))
-                    }
-                ])
-            )
+            resources: displayedResources,
+            bookings: displayedBookings
         };
 
         res.json({
@@ -603,6 +640,13 @@ app.post(
         const bookings =
             req.body.calendar.bookings ||
             {};
+
+        for (const [requestId, pending] of pendingAdminBookings) {
+            const createdIds = pending.created_booking_ids || [];
+            if (createdIds.some(id => Object.prototype.hasOwnProperty.call(bookings, String(id)))) {
+                pendingAdminBookings.delete(requestId);
+            }
+        }
 
 
         const bookingsCount =
@@ -880,7 +924,10 @@ app.post(
             staffer_id,
             variant_id,
             client_id,
-            business_secret_note
+            business_secret_note,
+            staffer_name,
+            service_name,
+            client_name
         } = req.body || {};
 
 
@@ -934,6 +981,36 @@ app.post(
                 business_secret_note || null
 
         };
+
+        const optimisticBookingId = `pending-admin-${id}`;
+        pendingAdminBookings.set(String(id), {
+            id: optimisticBookingId,
+            date,
+            staffer_id,
+            staffer_name: staffer_name || "Працівник",
+            booking: {
+                id: optimisticBookingId,
+                booked_from: `${date}T${start}`,
+                booked_till: `${date}T${end}`,
+                customer: {
+                    id: client_id || null,
+                    name: client_name || "Без імені"
+                },
+                service: {
+                    id: variant_id,
+                    name: service_name || "Послуга"
+                },
+                resources: [{
+                    id: staffer_id,
+                    name: staffer_name || "Працівник",
+                    type: "S"
+                }],
+                type: "B",
+                status: "A",
+                _created_in_admin: true,
+                _creation_status: "creating"
+            }
+        });
 
         addAppointmentLog("queued", "Запит на створення запису створено в адмінці.", id);
 
@@ -1075,6 +1152,12 @@ app.post(
                 adminCreatedBookingIds.add(String(bookingId));
             }
 
+            const pending = pendingAdminBookings.get(String(result.request_id));
+            if (pending) {
+                pending.created_booking_ids = result.created_booking_ids || [];
+                pending.booking._creation_status = "created";
+            }
+
             console.log(
                 "[BACKEND] Marked admin-created bookings:",
                 result.created_booking_ids || []
@@ -1086,6 +1169,7 @@ app.post(
 
         }
         else {
+            pendingAdminBookings.delete(String(result.request_id));
             addAppointmentLog("failed", result.error || "Booksy не створив запис.", result.request_id || null);
         }
 
